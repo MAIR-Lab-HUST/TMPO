@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Model checkpoints
+*.pt
+*.safetensors
+*.ckpt
+hps_ckpt/
+my_ckpt/
+
+# Outputs
+outputs/
+tensorboard/
+
+# Logs
+*.log
+*.txt.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+.env
+
+# Misc
+tree_base.txt

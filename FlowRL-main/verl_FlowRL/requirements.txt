@@ -1,0 +1,37 @@
+# Core VERL dependencies (matches setup.py install_requires)
+accelerate
+codetiming
+datasets
+dill
+hydra-core
+numpy
+pandas
+peft
+pyarrow>=19.0.0
+pybind11
+pylatexenc
+ray[default]>=2.41.0
+torchdata
+tensordict<=0.6.2
+transformers
+wandb
+packaging>=20.0
+
+# Development and testing dependencies
+pre-commit
+pytest
+py-spy
+
+# GPU acceleration (optional)
+liger-kernel
+flash-attn
+
+# Math verification (for FlowRL math training)
+math-verify
+
+# Web serving (for API endpoints)
+uvicorn
+fastapi
+
+# VLLM support (optional, uncomment if needed)
+# vllm<=0.8.5

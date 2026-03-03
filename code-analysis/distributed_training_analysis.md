@@ -1,10 +1,10 @@
 # Diffusion RL 项目分布式训练框架深度分析
 
-> 本文档深入分析 TreeGRPO、flow_grpo、FlowRL 三个项目使用的代码框架、GPU 并行计算策略、分布式训练方案和显存优化技术。
+> 本文档深入分析 TreeGRPO、flow_grpo、FlowRL、**MixGRPO** 四个项目使用的代码框架、GPU 并行计算策略、分布式训练方案和显存优化技术。
 
 ---
 
-## 一、三个项目的框架选型对比
+## 一、四个项目的框架选型对比
 
 ```mermaid
 graph LR
@@ -22,18 +22,24 @@ graph LR
         C1["verl 框架<br/>Ray + FSDP + vLLM"] --> C2["多节点异步"]
         C2 --> C3["python3 -m verl.trainer.main_ppo"]
     end
+
+    subgraph "MixGRPO"
+        D1["PyTorch FSDP<br/>+ torchrun + pdsh"] --> D2["多节点多卡<br/>4×8=32 GPU"]
+        D2 --> D3["pdsh + torchrun<br/>多节点启动"]
+    end
 ```
 
-| 维度 | TreeGRPO | flow_grpo | FlowRL |
-|------|----------|-----------|--------|
-| **核心框架** | Accelerate (DDP) | Accelerate + FSDP/DeepSpeed | verl (Ray + FSDP + vLLM) |
-| **并行策略** | 数据并行 DDP | 数据并行 + 模型分片 | Actor-Critic 分离调度 |
-| **典型 GPU 数** | 1-8 卡 | 1-32 卡 | 8-64 卡 |
-| **多节点** | 不支持 | 支持（NCCL） | 原生支持（Ray） |
-| **显存优化** | 梯度检查点 | FSDP分片+CPU卸载+梯度检查点 | FSDP+vLLM+tensor并行 |
-| **模型分片** | 无 | FULL_SHARD | FULL_SHARD |
-| **推理引擎** | diffusers 原生 | diffusers 原生 | vLLM 独立进程 |
-| **适用模型** | SD3.5-M | SD3/Flux/WAN | Qwen/DeepSeek LLM |
+| 维度 | TreeGRPO | flow_grpo | FlowRL | MixGRPO |
+|------|----------|-----------|--------|---------|
+| **核心框架** | Accelerate (DDP) | Accelerate + FSDP/DeepSpeed | verl (Ray + FSDP + vLLM) | PyTorch FSDP + torchrun |
+| **并行策略** | 数据并行 DDP | 数据并行 + 模型分片 | Actor-Critic 分离调度 | FSDP 模型分片 + 序列并行 |
+| **典型 GPU 数** | 1-8 卡 | 1-32 卡 | 8-64 卡 | **32 卡 (4×8)** |
+| **多节点** | 不支持 | 支持（NCCL） | 原生支持（Ray） | **pdsh + torchrun (NCCL IB)** |
+| **显存优化** | 梯度检查点 | FSDP分片+CPU卸载+梯度检查点 | FSDP+vLLM+tensor并行 | **FSDP分片+梯度检查点+bf16** |
+| **模型分片** | 无 | FULL_SHARD | FULL_SHARD | **FULL_SHARD / HYBRID** |
+| **推理引擎** | diffusers 原生 | diffusers 原生 | vLLM 独立进程 | **diffusers 原生** |
+| **适用模型** | SD3.5-M | SD3/Flux/WAN | Qwen/DeepSeek LLM | **FLUX.1-Dev (~12B)** |
+| **微调方式** | 全参数 | LoRA r=32 | LoRA | **全参数 (fp32 master)** |
 
 ---
 
@@ -593,3 +599,344 @@ fsdp_config:
     fsdp_use_orig_params: true   # LoRA 兼容
 mixed_precision: bf16
 ```
+
+---
+
+## 九、MixGRPO：torchrun + FSDP + pdsh 多节点
+
+### 9.1 框架架构概览
+
+MixGRPO **不使用 HuggingFace Accelerate**，而是直接基于 **PyTorch 原生 FSDP + torchrun** 构建分布式训练，用 `pdsh` 实现多节点命令广播。这种方式更底层但也更灵活。
+
+```mermaid
+graph TD
+    subgraph "MixGRPO 分布式架构"
+        PDSH["pdsh 命令广播"] --> N0["Node 0 (8 GPU)<br/>torchrun --node_rank=0"]
+        PDSH --> N1["Node 1 (8 GPU)<br/>torchrun --node_rank=1"]
+        PDSH --> N2["Node 2 (8 GPU)<br/>torchrun --node_rank=2"]
+        PDSH --> N3["Node 3 (8 GPU)<br/>torchrun --node_rank=3"]
+        
+        N0 --> FSDP0["FSDP 分片<br/>FLUX Transformer"]
+        N1 --> FSDP1["FSDP 分片<br/>FLUX Transformer"]
+        N2 --> FSDP2["FSDP 分片<br/>FLUX Transformer"]
+        N3 --> FSDP3["FSDP 分片<br/>FLUX Transformer"]
+        
+        FSDP0 <-->|"NCCL IB<br/>AllGather/ReduceScatter"| FSDP1
+        FSDP1 <-->|"NCCL IB"| FSDP2
+        FSDP2 <-->|"NCCL IB"| FSDP3
+    end
+```
+
+### 9.2 多节点启动方式（pdsh + torchrun）
+
+MixGRPO 使用 `pdsh`（Parallel Distributed Shell）将 torchrun 命令广播到所有节点：
+
+```bash
+# scripts/finetune/finetune_flux_grpo_MixGRPO.sh
+
+# ① hostfile 定义节点 IP
+hostfile="data/hosts/hostfile"         # 每行一个节点 IP
+
+# ② 获取主节点 IP
+CHIEF_IP_custom=$(head -n 1 $hostfile)
+
+# ③ pdsh 广播到所有节点
+pdsh -R ssh -w ^$hostfile "
+    cd $cur_path ;
+    conda activate MixGRPO ;
+    
+    # NCCL 环境变量(详见 9.3)
+    export NCCL_IB_DISABLE=0 ;
+    ...
+    
+    # ④ torchrun 启动分布式训练
+    torchrun \
+        --nnodes 4 \                    # 4 个节点
+        --nproc_per_node 8 \            # 每节点 8 GPU
+        --node_rank \$INDEX_CUSTOME \   # 节点编号（预设环境变量）
+        --master_addr $CHIEF_IP_custom \
+        --master_port $free_port \
+        fastvideo/train_grpo_flux.py ...
+"
+```
+
+**节点编号预设**（`set_env_multinode.sh`）：
+```bash
+# 在每个节点上预先设置 INDEX_CUSTOME=0,1,2,3
+```
+
+**与其他项目启动方式对比**：
+
+| 项目 | 启动工具 | 节点发现 | 进程管理 |
+|------|---------|---------|---------|
+| TreeGRPO | `accelerate launch` | 单节点自动 | Accelerate |
+| flow_grpo | `accelerate launch` | YAML 配置 IP | Accelerate |
+| FlowRL | `verl.trainer.main_ppo` | Ray 集群 | Ray |
+| **MixGRPO** | `pdsh + torchrun` | hostfile | **torchrun elastic** |
+
+### 9.3 NCCL InfiniBand 高速互连配置
+
+MixGRPO 的脚本包含了**最完整的 NCCL 调优配置**：
+
+```bash
+# NCCL InfiniBand 核心配置
+export NCCL_IB_DISABLE=0              # ✅ 启用 InfiniBand
+export NCCL_P2P_DISABLE=0             # ✅ 启用 P2P（GPU Direct RDMA）
+export NCCL_IB_CUDA_SUPPORT=1         # ✅ GPU Direct RDMA
+export NCCL_IB_GID_INDEX=3            # GID 索引（RoCE v2）
+export NCCL_IB_SL=3                   # 服务级别（QoS）
+
+# InfiniBand 设备指定（8 个 RDMA 设备对应 8 个 GPU）
+export NCCL_IB_HCA=mlx5_bond_1,mlx5_bond_5,mlx5_bond_3,mlx5_bond_7,\
+                    mlx5_bond_4,mlx5_bond_8,mlx5_bond_2,mlx5_bond_6
+
+# 网络接口
+export NCCL_SOCKET_IFNAME=bond1       # TCP fallback 网卡
+export UCX_NET_DEVICES=bond1          # UCX 设备
+
+# 性能调优
+export NCCL_IB_QPS_PER_CONNECTION=4   # 每连接 QoS 队列数
+export NCCL_IB_TC=160                 # 流量控制类
+export NCCL_LL_THRESHOLD=16384        # 低延迟协议阈值
+export NCCL_NET_GDR_LEVEL=2           # GPU Direct RDMA 级别
+
+# 特性开关
+export NCCL_COLLNET_ENABLE=0          # 关闭 In-Network Computing
+export NCCL_PXN_DISABLE=1             # 关闭 PXN（节点间 NVLink）
+export NCCL_NVLS_ENABLE=0             # 关闭 NVLink SHARP
+export NCCL_CHECK_DISABLE=1           # 关闭校验（性能优化）
+export SHARP_COLL_ENABLE_SAT=0        # 关闭 SHARP 硬件聚合
+```
+
+> **关键**：MixGRPO 面向的是配备 Mellanox ConnectX 网卡的 HPC 集群，通过 8 路 IB bonding 实现节点间 ~200Gbps 带宽。
+
+### 9.4 FSDP 配置详解
+
+```python
+# fsdp_util.py — get_dit_fsdp_kwargs()
+def get_dit_fsdp_kwargs(transformer, sharding_strategy, ...):
+    # ① 获取不切分的 Transformer 层类
+    no_split_modules = get_no_split_modules(transformer)
+    
+    # ② 按 Transformer 层自动分片
+    auto_wrap_policy = transformer_auto_wrap_policy(
+        transformer_layer_cls=no_split_modules,
+    )
+    
+    # ③ 混合精度配置
+    mixed_precision = MixedPrecision(
+        param_dtype=torch.float32,    # ← 主权重保持 fp32!
+        reduce_dtype=torch.float32,   # 梯度通信用 fp32
+        buffer_dtype=torch.float32,   # buffer 用 fp32
+    )
+    
+    # ④ 分片策略
+    fsdp_kwargs = {
+        "auto_wrap_policy": auto_wrap_policy,
+        "mixed_precision": mixed_precision,
+        "sharding_strategy": ShardingStrategy.FULL_SHARD,  # 默认
+        "device_id": torch.cuda.current_device(),
+        "limit_all_gathers": True,     # 限制 AllGather 并发，节省显存
+    }
+```
+
+**MixGRPO 支持的分片策略**（`--fsdp_sharding_startegy`）：
+
+| 策略 | 代码值 | 含义 |
+|------|--------|------|
+| `full` | `FULL_SHARD` | 参数+梯度+优化器全分片 |
+| `hybrid_full` | `HYBRID_SHARD` | 节点内 FULL_SHARD，节点间复制 |
+| `none` | `NO_SHARD` | 不分片（类似 DDP） |
+| `hybrid_zero2` | `_HYBRID_SHARD_ZERO2` | 节点内 ZeRO-2，节点间复制 |
+
+**特殊设计：fp32 主权重**
+
+与 flow_grpo 使用 bf16 参数不同，MixGRPO **保持 fp32 主权重，仅在前向推理时使用 `torch.autocast("cuda", torch.bfloat16)`**：
+
+```python
+# train_grpo_flux.py L780-783
+transformer = FluxTransformer2DModel.from_pretrained(
+    args.pretrained_model_name_or_path,
+    subfolder="transformer",
+    torch_dtype=torch.float32    # ← fp32 主权重
+)
+
+# 训练时 autocast 为 bf16
+with torch.autocast("cuda", torch.bfloat16):
+    pred = transformer(hidden_states=latents, ...)  # bf16 前向
+```
+
+### 9.5 模型激活检查点
+
+```python
+# fsdp_util.py — apply_fsdp_checkpointing()
+def apply_fsdp_checkpointing(model, no_split_modules, p=1):
+    """
+    p=1: 每层都做检查点；p=1/2: 每隔一层做检查点
+    用 NON_REENTRANT 模式（更高效，兼容 FSDP）
+    """
+    block_idx = 0
+    cut_off = 1 / 2
+    p = eval(p) if isinstance(p, str) else p
+    
+    def selective_checkpointing(submodule):
+        nonlocal block_idx, cut_off
+        if isinstance(submodule, no_split_modules):
+            block_idx += 1
+            if block_idx * p >= cut_off:
+                cut_off += 1
+                return True
+        return False
+    
+    apply_activation_checkpointing(
+        model,
+        checkpoint_wrapper_fn=non_reentrant_wrapper,
+        check_fn=selective_checkpointing,
+    )
+```
+
+### 9.6 序列并行（Sequence Parallel）
+
+MixGRPO 继承了 FastVideo 的序列并行能力，通过 AllToAll 和 AllGather 通信原语实现：
+
+```python
+# parallel_states.py — 序列并行分组
+def initialize_sequence_parallel_group(sp_size):
+    """将 GPU 划分为序列并行组"""
+    num_sp_groups = world_size // sp_size
+    for i in range(num_sp_groups):
+        ranks = range(i * sp_size, (i + 1) * sp_size)
+        group = dist.new_group(ranks)
+
+# communications_flux.py — AllToAll 通信
+class SeqAllToAll4D(torch.autograd.Function):
+    """QKV 重分布：将序列维度切分，头维度聚合"""
+    @staticmethod
+    def forward(ctx, group, input, scatter_idx, gather_idx):
+        # scatter_idx=2 (head), gather_idx=1 (seq)
+        # 输入: (B, S/P, H*P, D) → 输出: (B, S, H, D)
+        ...
+
+# communications_flux.py — 数据加载器包装
+def sp_parallel_dataloader_wrapper(dataloader, device, batch_size, sp_size, sp_batch_size):
+    """将数据加载器包装为序列并行版本
+    - 广播 prompt embedding 到序列并行组内所有 GPU
+    - 确保同组 GPU 看到相同 prompt
+    """
+```
+
+> **注意**：MixGRPO 默认 `sp_size=1`（不启用序列并行），但保留了完整实现以支持超高分辨率场景。
+
+### 9.7 检查点管理
+
+```python
+# checkpoint.py — 分布式检查点保存
+def save_checkpoint(transformer, rank, output_dir, step, epoch):
+    """使用 FSDP FULL_STATE_DICT 模式保存检查点
+    
+    - StateDictType.FULL_STATE_DICT: 在 rank=0 汇聚完整模型
+    - offload_to_cpu=True: 汇聚到 CPU 内存，避免 GPU OOM
+    - rank0_only=True: 仅 rank=0 执行实际保存
+    - 格式: safetensors (高效序列化)
+    """
+    with FSDP.state_dict_type(
+        transformer,
+        StateDictType.FULL_STATE_DICT,
+        FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
+    ):
+        cpu_state = transformer.state_dict()
+    
+    if rank <= 0:
+        save_file(cpu_state, f"{output_dir}/checkpoint-{step}-{epoch}/diffusion_pytorch_model.safetensors")
+```
+
+### 9.8 GPU 通信模式
+
+```mermaid
+sequenceDiagram
+    participant N0G0 as Node0 GPU0
+    participant N0G7 as Node0 GPU7
+    participant N1G0 as Node1 GPU0
+    participant N3G7 as Node3 GPU7
+    
+    Note over N0G0,N3G7: === 采样阶段 (各 GPU 独立, torch.no_grad) ===
+    N0G0->>N0G0: prompt_1 × 12 generations → SDE/ODE 采样
+    N0G7->>N0G7: prompt_8 × 12 generations → SDE/ODE 采样
+    N1G0->>N1G0: prompt_9 × 12 generations → SDE/ODE 采样
+    N3G7->>N3G7: prompt_32 × 12 generations → SDE/ODE 采样
+    
+    Note over N0G0,N3G7: === VAE 解码 + 奖励计算 (各 GPU 独立) ===
+    N0G0->>N0G0: HPSv2 + ImageReward + PickScore (线程池并行)
+    
+    Note over N0G0,N3G7: === AllGather 奖励 (跨 32 GPU) ===
+    N0G0-->>N3G7: dist.all_gather(rewards)
+    N3G7-->>N0G0: gather
+    
+    Note over N0G0,N3G7: === 组内优势计算 (各 GPU 本地) ===
+    N0G0->>N0G0: advantage = (r_i - mean) / std, per prompt group
+    
+    Note over N0G0,N3G7: === 训练阶段 (FSDP 同步) ===
+    loop 窗口内时间步 × gradient_accumulation
+        N0G0->>N0G0: grpo_one_step → new_log_prob → PPO loss
+        Note over N0G0,N3G7: loss.backward() → FSDP ReduceScatter
+    end
+    
+    Note over N0G0,N3G7: === 梯度同步 + 优化器步进 ===
+    N0G0-->>N3G7: FSDP AllGather params + clip gradients
+    N0G0->>N0G0: optimizer.step()
+    
+    Note over N0G0,N3G7: === AllReduce 损失统计 ===
+    N0G0-->>N3G7: dist.all_reduce(loss, op=AVG)
+```
+
+### 9.9 与 flow_grpo FSDP 的关键差异
+
+| 维度 | flow_grpo | MixGRPO |
+|------|-----------|---------|
+| **包装层** | Accelerate 封装 FSDP | 直接使用 PyTorch FSDP |
+| **主权重精度** | bf16 | **fp32**（更高精度，更多显存） |
+| **优化器卸载** | ✅ OptimizerOffloadHook | ❌ 不支持 |
+| **微调方式** | LoRA (r=32) | **全参数微调** |
+| **梯度累积** | Accelerate 自动管理 | **手动管理** (`(i+1)%accum==0`) |
+| **奖励全局汇聚** | `accelerator.gather()` | `dist.all_gather()` |
+| **损失同步** | Accelerate 自动 | `dist.all_reduce(loss, op=AVG)` |
+| **检查点** | Accelerate `save_state()` | **FSDP FULL_STATE_DICT + safetensors** |
+| **序列并行** | ❌ | ✅（预留实现，默认 sp=1） |
+| **NCCL 调优** | 基础 IB 配置 | **完整 RDMA + bonding 配置** |
+
+---
+
+## 十、四项目显存优化综合对比（更新）
+
+| 优化技术 | TreeGRPO | flow_grpo | FlowRL | MixGRPO |
+|---------|----------|-----------|--------|---------|
+| **LoRA 微调** | ❌ 全参数 | ✅ r=32 | ✅ LoRA | ❌ **全参数 fp32** |
+| **梯度检查点** | ✅ | ✅ | ✅ | ✅ (可选 selective) |
+| **FSDP 模型分片** | ❌ | ✅ FULL_SHARD | ✅ FULL_SHARD | ✅ **FULL/HYBRID** |
+| **优化器 CPU 卸载** | ❌ | ✅ OptimizerOffloadHook | ❌ (可选) | ❌ |
+| **混合精度** | bf16 | fp16/bf16 | bf16 | **fp32 权重 + bf16 推理** |
+| **推理与训练分离** | ❌ | ❌ | ✅ vLLM | ❌ |
+| **Tensor 并行** | ❌ | ❌ | ✅ (vLLM) | ❌ |
+| **序列并行** | ❌ | ❌ | ❌ | ✅ (预留) |
+| **NCCL IB 调优** | ❌ | 基础 | ❌ | ✅ **完整** |
+| **limit_all_gathers** | - | - | - | ✅ |
+
+---
+
+## 十一、Z-AFT 推荐的分布式方案（更新）
+
+基于以上四个项目的分析，Z-AFT 项目推荐：
+
+| 组件 | 方案 | 参考项目 | 理由 |
+|------|------|---------|------|
+| 框架 | PyTorch FSDP + torchrun | MixGRPO | 最灵活，适合 FLUX 大模型 |
+| 备选框架 | HuggingFace Accelerate | flow_grpo | 更简洁的 API 封装 |
+| 并行策略 | FSDP FULL_SHARD | MixGRPO + flow_grpo | 12B 模型必需分片 |
+| 模型微调 | LoRA (r=32) | flow_grpo | 显存友好；全参数仅在足够 GPU 时使用 |
+| 显存优化 | 梯度检查点 + bf16 autocast | MixGRPO | 基础必备 |
+| 可选优化 | Optimizer CPU Offload | flow_grpo | GPU 卡数不够时使用 |
+| 多节点启动 | pdsh + torchrun | MixGRPO | 适合有 hostfile 的 HPC 集群 |
+| NCCL 配置 | IB + RDMA 完整配置 | MixGRPO | 多节点高带宽必需 |
+| 采样器 | 自定义 TreeDistributedSampler | flow_grpo 思路 | 保证同 prompt 的分支在同 GPU |
+| 梯度累积 | 手动管理 | MixGRPO | 适配滑动窗口训练结构 |
+

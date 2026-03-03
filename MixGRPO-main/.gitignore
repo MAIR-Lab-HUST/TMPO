@@ -1,0 +1,24 @@
+wandb
+.my_lh
+**/.DS_Store
+fastvideo.egg-info
+
+# models
+data/flux
+data/rl_embeddings
+hps_ckpt
+image_reward_ckpt/.cache
+image_reward_ckpt/ImageReward.pt
+mix_grpo_ckpt
+image_reward_ckpt
+HPSv2
+
+# outputs
+data/outputs
+
+# cache
+**/__pycache__/**
+**/.cache/**
+
+# git lfs
+data/.gitattributes

@@ -111,6 +111,8 @@ def recompute_log_prob(
     给定 (x_t, x_{t-Δt}) 对, 用当前模型的 v_θ 重新计算:
         log π_θ(x_{t-Δt} | x_t)
 
+    同时返回 RatioNorm 所需的中间量 (mean, std_dev_t, sqrt_dt)。
+
     Args:
         latent_in: (B, C, H, W) x_t
         latent_out: (B, C, H, W) x_{t-Δt} (来自旧策略采样)
@@ -120,6 +122,9 @@ def recompute_log_prob(
 
     Returns:
         log_prob: scalar, log π_θ(x_{t-Δt} | x_t)
+        mean: (B, C, H, W) 当前策略的 SDE 均值 μ_θ
+        std_dev_t: float, 噪声系数 √(σ/(1-σ))·η
+        sqrt_dt: float, √(-dt)
     """
     dt = sigma_next - sigma
     snr_inv = sigma / (1.0 - sigma + 1e-8)
@@ -130,7 +135,8 @@ def recompute_log_prob(
     drift_coeff_v = (1.0 + std_sq * (1.0 - sigma) / (2.0 * sigma + 1e-8)) * dt
 
     mean = latent_in * drift_coeff_x + model_output * drift_coeff_v
-    noise_scale = std_dev_t * math.sqrt(max(-dt, 0.0))
+    sqrt_dt = math.sqrt(max(-dt, 0.0))
+    noise_scale = std_dev_t * sqrt_dt
 
     if noise_scale > 1e-8:
         d = latent_in.numel() // latent_in.shape[0]
@@ -142,4 +148,4 @@ def recompute_log_prob(
     else:
         log_prob = torch.tensor(0.0, device=latent_in.device)
 
-    return log_prob
+    return log_prob, mean, std_dev_t, sqrt_dt

@@ -191,8 +191,8 @@ def train_one_step(
     )
 
     for update_iter in range(loss_cfg.get("is_num_updates", 4)):
-        # 重新计算当前策略的 log_prob (需要梯度)
-        current_log_probs = tree_sampler.recompute_path_log_probs(
+        # 重新计算当前策略的 log_prob (需要梯度) + RatioNorm 逐步数据
+        recompute_result = tree_sampler.recompute_path_log_probs(
             transformer=transformer,
             branches=branches,
             split_steps=split_steps,
@@ -205,7 +205,9 @@ def train_one_step(
             dtype=dtype,
         )
 
-        # 计算总损失
+        current_log_probs = recompute_result["path_log_probs"]
+
+        # 计算总损失 (传入 RatioNorm 逐步数据)
         loss, metrics = loss_fn(
             current_log_probs=current_log_probs,
             old_log_probs=old_log_probs,
@@ -213,6 +215,13 @@ def train_one_step(
             ref_log_probs=ref_log_probs,
             path_features=path_features.detach(),
             num_sde_steps=len(split_steps),
+            # RatioNorm 逐步数据
+            step_log_probs=recompute_result["step_log_probs"],
+            old_step_log_probs=recompute_result["old_step_log_probs"],
+            step_means=recompute_result["step_means"],
+            old_step_means=recompute_result["old_step_means"],
+            std_dev_ts=recompute_result["std_dev_ts"],
+            sqrt_dts=recompute_result["sqrt_dts"],
         )
 
         # 梯度累积

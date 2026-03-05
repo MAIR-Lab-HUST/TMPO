@@ -19,13 +19,14 @@ from .scheduler import AdaptiveScheduler, build_sigma_schedule
 class Branch:
     """单条采样分支的状态"""
 
-    __slots__ = ["latent", "log_prob_sum", "step_log_probs", "latent_history",
-                 "sigma_history", "dpm_solver"]
+    __slots__ = ["latent", "log_prob_sum", "step_log_probs", "step_means",
+                 "latent_history", "sigma_history", "dpm_solver"]
 
     def __init__(self, latent: torch.Tensor):
         self.latent = latent
         self.log_prob_sum = 0.0
         self.step_log_probs: List[float] = []         # 每个 SDE 步的 log_prob
+        self.step_means: List[torch.Tensor] = []      # 每个 SDE 步的均值 μ_θ (用于 RatioNorm)
         self.latent_history: List[torch.Tensor] = []   # 关键步的 latent 快照
         self.sigma_history: List[float] = []           # 对应的 sigma 值
         self.dpm_solver = DPMSolverPP(order=2, solver_type="midpoint")
@@ -35,6 +36,7 @@ class Branch:
         new = Branch(self.latent.clone())
         new.log_prob_sum = self.log_prob_sum
         new.step_log_probs = list(self.step_log_probs)
+        new.step_means = list(self.step_means)
         new.latent_history = list(self.latent_history)
         new.sigma_history = list(self.sigma_history)
         new.dpm_solver = DPMSolverPP(
@@ -185,6 +187,7 @@ class TreeSampler:
                         new_b.latent = z_new
                         new_b.log_prob_sum += log_prob.item()
                         new_b.step_log_probs.append(log_prob.item())
+                        new_b.step_means.append(mean.detach().clone())
                         new_b.latent_history.append(z.clone())
                         new_b.sigma_history.append(sigma)
                         new_branches.append(new_b)
@@ -220,6 +223,7 @@ class TreeSampler:
                 "latent": b.latent,
                 "log_prob_sum": b.log_prob_sum,
                 "step_log_probs": b.step_log_probs,
+                "step_means": b.step_means,
                 "latent_history": b.latent_history,
                 "sigma_history": b.sigma_history,
             })
@@ -238,8 +242,10 @@ class TreeSampler:
         text_ids: torch.Tensor,
         latent_image_ids: torch.Tensor,
         dtype: torch.dtype = torch.bfloat16,
-    ) -> torch.Tensor:
+    ) -> Dict:
         """用当前策略重新计算各路径的 log_prob（训练阶段）
+
+        同时返回 RatioNorm 所需的逐步中间量。
 
         Args:
             transformer: 当前模型（需要梯度）
@@ -247,22 +253,46 @@ class TreeSampler:
             其他: 同 sample()
 
         Returns:
-            path_log_probs: (K,) 各路径的累积 SDE log_prob
+            result: Dict 包含:
+                - path_log_probs: (K,) 各路径的累积 SDE log_prob
+                - step_log_probs: List[Tensor(K,)], 各 SDE 步的逐路径 log_prob
+                - step_means: List[Tensor(K,C,H,W)], 各步当前策略的 SDE 均值
+                - old_step_log_probs: List[Tensor(K,)], 各步旧策略的 log_prob
+                - old_step_means: List[Tensor(K,C,H,W)], 各步旧策略的 SDE 均值
+                - std_dev_ts: List[float], 各步的 σ_t
+                - sqrt_dts: List[float], 各步的 √(-dt)
         """
-        all_log_probs = []
         device = next(transformer.parameters()).device
+        K = len(branches)
+        num_sde_steps = min(len(split_steps), len(branches[0]["latent_history"]))
 
-        for branch in branches:
-            total_log_prob = torch.tensor(0.0, device=device)
+        # 按 SDE 步组织: 每步收集所有 K 条路径的数据
+        all_path_log_probs = []
+        per_step_log_probs = []      # List[Tensor(K,)]
+        per_step_means = []          # List[Tensor(K,...)]  当前策略
+        per_step_old_log_probs = []  # List[Tensor(K,)]
+        per_step_old_means = []      # List[Tensor(K,...)]  旧策略
+        per_step_std_dev_ts = []     # List[float]
+        per_step_sqrt_dts = []       # List[float]
 
-            for i, (latent_in, sigma_val) in enumerate(
-                zip(branch["latent_history"], branch["sigma_history"])
-            ):
-                if i >= len(split_steps):
+        # 先按步循环, 批量处理所有 K 条路径相同 SDE 步
+        for sde_idx in range(num_sde_steps):
+            step_idx = split_steps[sde_idx]
+            eta = noise_levels[sde_idx]
+
+            step_lps = []
+            step_means_cur = []
+            step_lps_old = []
+            step_means_old = []
+            step_std = None
+            step_sqrt = None
+
+            for b_idx, branch in enumerate(branches):
+                if sde_idx >= len(branch["latent_history"]):
                     break
 
-                step_idx = split_steps[i]
-                eta = noise_levels[i]
+                latent_in = branch["latent_history"][sde_idx]
+                sigma_val = branch["sigma_history"][sde_idx]
                 sigma = sigma_val
                 sigma_next = sigmas[step_idx + 1].item()
 
@@ -284,13 +314,13 @@ class TreeSampler:
                 if v_pred.dim() == 4:
                     v_pred = v_pred.squeeze(0)
 
-                # 下一步 latent（从历史中获取，或最终 latent）
-                if i + 1 < len(branch["latent_history"]):
-                    latent_out = branch["latent_history"][i + 1]
+                # 下一步 latent
+                if sde_idx + 1 < len(branch["latent_history"]):
+                    latent_out = branch["latent_history"][sde_idx + 1]
                 else:
                     latent_out = branch["latent"]
 
-                log_prob = recompute_log_prob(
+                log_prob, mean, std_dev_t, sqrt_dt = recompute_log_prob(
                     latent_in=latent_in,
                     latent_out=latent_out,
                     model_output=v_pred,
@@ -298,8 +328,33 @@ class TreeSampler:
                     sigma_next=sigma_next,
                     eta=eta,
                 )
-                total_log_prob = total_log_prob + log_prob
 
-            all_log_probs.append(total_log_prob)
+                step_lps.append(log_prob)
+                step_means_cur.append(mean)
+                step_lps_old.append(branch["step_log_probs"][sde_idx])
+                step_means_old.append(branch["step_means"][sde_idx])
+                step_std = std_dev_t
+                step_sqrt = sqrt_dt
 
-        return torch.stack(all_log_probs)
+            # 汇总当前 SDE 步
+            per_step_log_probs.append(torch.stack(step_lps))           # (K,)
+            per_step_means.append(torch.stack(step_means_cur))         # (K,C,H,W)
+            per_step_old_log_probs.append(
+                torch.tensor(step_lps_old, device=device, dtype=torch.float32)
+            )  # (K,)
+            per_step_old_means.append(torch.stack(step_means_old))     # (K,C,H,W)
+            per_step_std_dev_ts.append(step_std)
+            per_step_sqrt_dts.append(step_sqrt)
+
+        # 轨迹级累积 log_prob
+        path_log_probs = sum(per_step_log_probs)  # (K,)
+
+        return {
+            "path_log_probs": path_log_probs,
+            "step_log_probs": per_step_log_probs,
+            "step_means": per_step_means,
+            "old_step_log_probs": per_step_old_log_probs,
+            "old_step_means": per_step_old_means,
+            "std_dev_ts": per_step_std_dev_ts,
+            "sqrt_dts": per_step_sqrt_dts,
+        }

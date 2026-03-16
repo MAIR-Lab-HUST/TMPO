@@ -1,0 +1,57 @@
+# SD3.5-Medium 全参数训练配置 (8×H200)
+# 与 LoRA 版本的区别: 无 lora 配置, 使用 FULL_SHARD, 更低学习率
+
+model:
+  # 服务器绝对路径
+  pretrained_path: "/home/zhaxianyu/lijiaming08/models/sd35m"
+  vae_path: null
+  # 不设置 lora → 全参数训练
+
+dataset:
+  data_json_path: "/home/zhaxianyu/lijiaming08/prompts_100.jsonl"
+  resolution: [512, 512]
+
+tree:
+  num_inference_steps: 28
+  k: 3
+  base_noise_levels: [0.4, 0.7, 1.0]
+  kappa: 4.0
+  shift: 3.0
+
+dpm_flash:
+  enabled: true
+  compress_ratio: 0.4
+  solver_order: 2
+  solver_type: "midpoint"
+
+loss:
+  beta: 15.0
+  lambda_entropy: 0.01
+  lambda_ref: 0.1
+  is_clip_range: 0.2
+  is_num_updates: 4
+  rbf_bandwidth: 1.0
+  adv_clip_max: 5.0
+
+reward:
+  models: ["hpsv2", "clipscore"]
+  weights: [0.6, 0.4]
+  mix_strategy: "advantage_aggr"
+  hps_path: "/home/zhaxianyu/lijiaming08/reward_ckpt/HPS_v2.1_compressed.pt"
+  hps_clip_path: "/home/zhaxianyu/lijiaming08/reward_ckpt/open_clip_pytorch_model.bin"
+  clip_score_path: "/home/zhaxianyu/lijiaming08/reward_ckpt/clip_score"
+
+training:
+  learning_rate: 3e-6            # 全参数用更低 lr (LoRA 用 1e-5)
+  max_grad_norm: 1.0
+  weight_decay: 0.01             # 全参数加大 weight_decay 防过拟合
+  gradient_accumulation_steps: 3
+  max_train_steps: 200           # 全参数收敛更快, 步数可以少一些
+  checkpointing_steps: 50
+  mixed_precision: "bf16"
+  gradient_checkpointing: true   # 全参数必须开启, 否则 OOM
+  allow_tf32: true
+  seed: 42
+  vae_decode_batch_size: 4
+  output_dir: "/home/zhaxianyu/lijiaming08/treematch-rl/outputs/sd35m_fullparam"
+  experiment_name: "treematch_sd35m_fullparam"

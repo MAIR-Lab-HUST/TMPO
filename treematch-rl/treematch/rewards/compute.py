@@ -8,6 +8,7 @@
 融合策略:
 - advantage_aggr: 各模型独立归一化后加权合并 (推荐)
 - reward_aggr: 先加权合并奖励再归一化
+- raw_aggr: 直接加权求和, 不做任何归一化
 """
 
 import torch
@@ -81,6 +82,7 @@ def compute_reward(
         mix_strategy: 融合策略
             "advantage_aggr" → 各模型独立归一化后加权
             "reward_aggr" → 先加权合并再归一化
+            "raw_aggr" → 直接加权求和(不中心化/不标准化)
 
     Returns:
         final_rewards: (K,) 融合后的奖励
@@ -124,6 +126,14 @@ def compute_reward(
             total += weight * r
         final_rewards = (total - total.mean()) / (total.std() + 1e-8)
 
+    elif mix_strategy == "raw_aggr":
+        # 直接加权聚合, 保留奖励原始尺度
+        total = torch.zeros(K)
+        for name, weight in reward_weights.items():
+            r = rewards_dict.get(name, torch.zeros(K))
+            total += weight * r
+        final_rewards = total
+
     else:
         raise ValueError(f"Unknown mix_strategy: {mix_strategy}")
 
@@ -158,11 +168,15 @@ def decode_and_compute_rewards(
     for i in range(0, K, batch_size):
         batch = latents[i : i + batch_size]
         with torch.no_grad(), torch.autocast("cuda", torch.bfloat16):
-            decoded = vae.decode(batch / vae.config.scaling_factor).sample
+            # Flux VAE decode 需要加 shift_factor; SD3/其他为 0
+            shift = getattr(vae.config, "shift_factor", 0.0) or 0.0
+            decoded = vae.decode(batch / vae.config.scaling_factor + shift).sample
 
         # 转为 PIL Image
         decoded = ((decoded + 1.0) / 2.0).clamp(0, 1)
         for img_tensor in decoded:
+            # NaN/Inf 诎为 0, 防止 uint8 转换溢出
+            img_tensor = torch.nan_to_num(img_tensor, nan=0.0, posinf=1.0, neginf=0.0).clamp(0, 1)
             img_np = (img_tensor.permute(1, 2, 0).cpu().float().numpy() * 255).astype(np.uint8)
             all_images.append(Image.fromarray(img_np))
 

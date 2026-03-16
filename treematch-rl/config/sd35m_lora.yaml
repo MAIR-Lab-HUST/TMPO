@@ -1,5 +1,8 @@
 model:
-  pretrained_path: "stabilityai/stable-diffusion-3.5-medium"
+  # HuggingFace 自动下载 (需网络):
+  # pretrained_path: "stabilityai/stable-diffusion-3.5-medium"
+  # 本地路径 (推荐, 先用 huggingface-cli download 下载):
+  pretrained_path: "./models/sd35m"
   vae_path: null
   lora:
     rank: 32
@@ -39,7 +42,7 @@ reward:
   mix_strategy: "advantage_aggr"
   hps_path: "./reward_ckpt/HPS_v2.1_compressed.pt"
   hps_clip_path: "./reward_ckpt/open_clip_pytorch_model.bin"
-  clip_score_path: "hf-hub:apple/DFN5B-CLIP-ViT-H-14-384"
+  clip_score_path: "./reward_ckpt/clip_score"
 
 training:
   learning_rate: 1e-5

@@ -81,10 +81,10 @@ class RatioNormIS:
             # 逐步对数比率: log w_{i,t} = log π_θ - log π_old
             log_w = current_step_log_probs[t] - old_step_log_probs[t]  # (K,)
 
-            # 偏置修正: ||Δμ||² / (2(σ_t·√Δt)²)
+            # 偏置修正: ||Δμ||²_mean / (2(σ_t·√Δt)²)
+            # 与 sde_step.py 中 log_prob 使用 .mean() 保持一致 (per-dim 归一化)
             delta_mu = current_step_means[t] - old_step_means[t]  # (K,C,H,W)
-            # 沿空间维度求和 (与 sde_step.py 中 log_prob 使用 .sum() 一致)
-            bias = delta_mu.pow(2).sum(
+            bias = delta_mu.pow(2).mean(
                 dim=tuple(range(1, delta_mu.ndim))
             )  # (K,)
             bias = bias / (2.0 * noise_product ** 2)
@@ -105,7 +105,9 @@ class RatioNormIS:
         weights = torch.exp(log_w_traj)
         weights = torch.clamp(weights, 1.0 - self.clip_range, 1.0 + self.clip_range)
 
-        # sqrt_dt² 均值 (用于 loss 归一化)
+        # mean_step_size: 各有效 SDE 步的平均步长 |Δσ| (即 sqrt_dt² = -dt)
+        # 注意: sqrt_dt = sqrt(-dt), 所以 sqrt_dt**2 = -dt = 步长本身
+        # 该值仅供 wandb 诊断 (tree/sqrt_dt_sq_mean), 不再参与 loss 归一化
         sqrt_dt_sq_mean = sqrt_dt_sq_sum / len(normalized_ratios)
 
         return weights.detach(), sqrt_dt_sq_mean

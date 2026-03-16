@@ -2,12 +2,18 @@ compute_environment: LOCAL_MACHINE
 distributed_type: FSDP
 fsdp_config:
   fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
+  # Flux 双流块 + 单流块都必须独立 wrap, 否则 38 个 FluxSingleTransformerBlock
+  # 全部归入 top-level FSDP unit → activation checkpointing 对单流块完全失效
+  # → 导致 38 × 单流块激活全量驻留, 配合 SHARD_GRAD_OP 的 24GB 参数开销极易 OOM
+  fsdp_transformer_layer_cls_to_wrap: "FluxTransformerBlock,FluxSingleTransformerBlock"
   fsdp_backward_prefetch: BACKWARD_PRE
-  fsdp_forward_prefetch: true
+  fsdp_forward_prefetch: false
   fsdp_offload_params: false
-  fsdp_sharding_strategy: FULL_SHARD
+  fsdp_sharding_strategy: SHARD_GRAD_OP   # ZeRO-2: 参数不分片, 消除 recompute 时的 per-block All-Gather
+  fsdp_state_dict_type: SHARDED_STATE_DICT
   fsdp_use_orig_params: true
-  fsdp_activation_checkpointing: true
+  fsdp_activation_checkpointing: true    # reduce activation peak in recompute backward (single-layer recompute)
+  fsdp_limit_all_gathers: true            # 限流: 防止反向传播一次性申请过多临时 Buffer → 避免 SIGABRT
 mixed_precision: bf16
 num_machines: 1
-num_processes: 4
+num_processes: 8

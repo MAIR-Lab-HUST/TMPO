@@ -27,6 +27,9 @@ class AdaptiveScheduler:
         r_max: float = 0.35,
         ema_decay: float = 0.99,
         min_gap: int = 3,
+        tail_guard_steps: int = 4,
+        alpha_ema: float = 0.85,
+        alpha_min: float = 0.10,   # alpha 下界: 防止奖励低于 r_min 时锁死 alpha=0 全早分叉
     ):
         """
         Args:
@@ -35,8 +38,11 @@ class AdaptiveScheduler:
             kappa: Beta 分布集中度 (κ=0 退化为均匀分布)
             base_noise_levels: 各分叉层基础噪声系数
             r_min, r_max: 奖励边界初始值 (用 EMA 在线更新)
-            ema_decay: EMA 衰减系数
+            ema_decay: 奖励边界的 EMA 衰减系数
             min_gap: 相邻分叉步的最小间隔
+            tail_guard_steps: 距离末尾保留的安全步数, 避免在极小 sigma 区域分叉导致数值不稳
+            alpha_ema: alpha 自身的 EMA 平滑系数 (越小越平滑, 0.85 ≈ 7步滞后)
+            alpha_min: alpha 下界 (0.10 保留最低 10% 晚期分叉算力, 防调度死锁)
         """
         self.num_inference_steps = num_inference_steps
         self.num_splits = num_splits
@@ -46,6 +52,10 @@ class AdaptiveScheduler:
         self.r_max = r_max
         self.ema_decay = ema_decay
         self.min_gap = min_gap
+        self.tail_guard_steps = max(2, int(tail_guard_steps))
+        self.alpha_ema = alpha_ema
+        self.alpha_min = alpha_min
+        self._alpha_smoothed: Optional[float] = None   # EMA 平滑后的 alpha
 
         # 默认分叉位置 (均匀分布)
         spacing = num_inference_steps // (num_splits + 1)
@@ -63,15 +73,27 @@ class AdaptiveScheduler:
         self.r_max = self.ema_decay * self.r_max + (1 - self.ema_decay) * batch_max
 
     def compute_alpha(self, mean_reward: float) -> float:
-        """计算归一化奖励水平 α
+        """计算归一化奖励水平 α, 并用 EMA 平滑防止骤变
 
-        α = clip((R̄ - R_min) / (R_max - R_min), 0, 1)
+        α_raw = clip((R̄ - R_min) / (R_max - R_min), 0, 1)
+        α_smooth = ema * α_prev + (1-ema) * α_raw
         """
         denom = self.r_max - self.r_min
         if denom < 1e-8:
-            return 0.5  # 边界相同时返回中间值
-        alpha = (mean_reward - self.r_min) / denom
-        return max(0.0, min(1.0, alpha))
+            alpha_raw = 0.5
+        else:
+            # alpha_min 下界: 即使奖励极差, 仍保留 alpha_min 的晚期分叉算力
+            alpha_raw = max(self.alpha_min, min(1.0, (mean_reward - self.r_min) / denom))
+
+        # EMA 平滑: 第一次直接赋值, 之后指数加权
+        if self._alpha_smoothed is None:
+            self._alpha_smoothed = alpha_raw
+        else:
+            self._alpha_smoothed = (
+                self.alpha_ema * self._alpha_smoothed
+                + (1.0 - self.alpha_ema) * alpha_raw
+            )
+        return self._alpha_smoothed
 
     def compute_split_steps(self, mean_reward: float) -> List[int]:
         """通过 Beta 分布计算自适应分叉位置
@@ -95,9 +117,13 @@ class AdaptiveScheduler:
         beta_dist = torch.distributions.Beta(a, b)
         fractions = beta_dist.sample((self.num_splits,)).sort().values
 
-        # 映射到步骤索引: [2, num_steps - 3]
+        # 映射到步骤索引: [2, num_steps - tail_guard_steps]
+        # 末尾 sigma 过小会让 log_prob 反传出现 1/noise_scale 型奇异梯度。
         margin = 2
-        effective_range = self.num_inference_steps - 2 * margin - 1
+        upper = self.num_inference_steps - self.tail_guard_steps
+        if upper <= margin:
+            upper = margin + 1
+        effective_range = upper - margin
         split_steps = (fractions * effective_range + margin).long().tolist()
 
         # 确保最小间隔
@@ -106,7 +132,7 @@ class AdaptiveScheduler:
                 split_steps[i] = split_steps[i - 1] + self.min_gap
 
         # 确保不超出范围
-        split_steps = [min(s, self.num_inference_steps - margin) for s in split_steps]
+        split_steps = [min(s, upper) for s in split_steps]
 
         return split_steps
 
@@ -125,7 +151,7 @@ class AdaptiveScheduler:
         alpha = self.compute_alpha(mean_reward)
         scale = 1.0 + (1.0 - alpha) * 0.3 - alpha * 0.2
 
-        return [max(0.2, min(eta * scale, 1.5)) for eta in self.base_noise_levels]
+        return [max(0.2, min(eta * scale, 1.0)) for eta in self.base_noise_levels]
 
     def get_schedule(self, mean_reward: Optional[float] = None):
         """获取完整调度方案

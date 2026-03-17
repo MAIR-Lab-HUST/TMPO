@@ -19,10 +19,32 @@ class CLIPScoreRewardModel:
         self.tokenizer = None
 
         try:
-            import open_clip
+            import open_clip, os, json
+            # 目录路径 → 解析到 bin 文件
+            actual_path = model_path
+            model_name = "ViT-H-14"
+            if os.path.isdir(model_path):
+                bin_file = os.path.join(model_path, "open_clip_pytorch_model.bin")
+                actual_path = bin_file if os.path.exists(bin_file) else model_path
+                # 读 config 获取架构名, 默认 DFN5B 用 ViT-H-14-378-quickgelu
+                cfg_file = os.path.join(model_path, "open_clip_config.json")
+                if os.path.exists(cfg_file):
+                    with open(cfg_file) as _f:
+                        _cfg = json.load(_f)
+                    # 依次尝试各字段, DFN5B 的 config 不同版本字段名不同
+                    model_name = (
+                        _cfg.get("model_name")
+                        or _cfg.get("model_cfg", {}).get("model_type")
+                        or _cfg.get("model_cfg", {}).get("model_name")
+                        or "ViT-H-14-378-quickgelu"
+                    )
+                else:
+                    model_name = "ViT-H-14-378-quickgelu"
+            elif "384" in model_path or "dfn" in model_path.lower():
+                model_name = "ViT-H-14-378-quickgelu"
             model, _, preprocess = open_clip.create_model_and_transforms(
-                "ViT-H-14-378-quickgelu" if "384" in model_path else "ViT-H-14",
-                pretrained=model_path,
+                model_name,
+                pretrained=actual_path,
                 device=device,
             )
             model.eval()

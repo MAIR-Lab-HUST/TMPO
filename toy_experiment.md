@@ -1,372 +1,481 @@
-# TreeMatch-RL vs Flow-GRPO 实验设计：粒子分布匹配验证
+# Softmax-TB Core Toy Experiment（先验验证版，可直接在 Mac 上跑）
 
-## 1. 实验动机与目标
+## 1. 实验目的
 
-### 1.1 核心假说
+这个 toy experiment 的目标，不是复刻完整 `treematch-rl` 训练流程，而是**只验证你最核心的观点**：
 
-TreeMatch-RL 的 Softmax-TB 损失以**奖励分布匹配**（$\pi \propto \exp(\beta R)$）为目标，而 Flow-GRPO 以**奖励最大化**（$\max \mathbb{E}[R]$）为目标。我们预期：
+> 用 `Softmax-TB` 让“路径概率分布”去匹配“奖励诱导分布”，本身就能避免只追最高峰，从而得到多峰、多样化的解。
 
-> **在多模态奖励景观下，TreeMatch-RL 能更好地覆盖所有奖励峰值，而 Flow-GRPO 会坍缩到少数高奖励模态。**
+这里我建议把论证切得非常干净：
 
-### 1.2 为何选用粒子分布匹配实验
+- **核心 idea**：`路径概率匹配奖励分布`
+- **不放进第一版的内容**：树状采样、ref、entropy、RatioNorm
 
-扩散模型的完整训练代价高昂，因此我们设计一个**低维度的合成实验**来快速验证核心机理：
+原因很简单：
 
-- **可控性**：目标分布已知，可精确度量匹配质量
-- **可视化**：2D 粒子可直接绘图展示分布覆盖
-- **速度**：几分钟内在单 GPU 或 CPU 上即可跑完
-- **说服力**：直观展示模式塌缩 vs 分布匹配的差异
+- 树状采样是训练 trick，用来提高大模型训练效率
+- ref / entropy 是正则和工程稳定项
+- 你这次 toy 的目的，是证明 **Softmax-TB 这个概率匹配思想本身成立**
 
----
+所以第一版 toy 最好是：
 
-## 2. 实验设定
+> 二维点 = 一条路径  
+> MLP 输出这个点的分数 = 路径 logit / 路径 log-prob 的代理  
+> 用 Softmax-TB 训练这个分数场  
+> 训练后从学到的分布里采样很多点，看是不是自然形成多峰覆盖
 
-### 2.1 问题定义：2D 粒子匹配多模态奖励分布
 
-设计一个连续空间的生成任务：
+## 2. 这个 toy 和当前 TreeMatch-RL 的对应关系
 
-```
-输入: z ~ N(0, I)       （2D 高斯噪声）
-生成: x = G_θ(z)        （可学习的生成网络）
-奖励: R(x) = 高斯混合   （多模态目标分布）
-```
+为了让 toy 和你现在的代码理念保持一致，可以做下面这个一一对应：
 
-**目标分布**（奖励函数）定义为 **5 个 2D 高斯分布**的混合：
+| TreeMatch-RL 概念 | Toy 中的对应物 |
+|---|---|
+| 一条完整 diffusion path | 一个二维点 `x in R^2` |
+| path log_prob | MLP 对该点输出的标量 score |
+| reward model 打分 | 手工构造的二维 reward landscape |
+| Softmax-TB 在组内匹配 `log_p` 与 `beta * reward` | 在二维候选点集合上匹配模型分布与奖励分布 |
+| rollout 很多 branch 看覆盖情况 | 从训练好的分布里采样很多二维点看是否多峰 |
 
-$$R(x) = \sum_{m=1}^{5} w_m \cdot \mathcal{N}(x \mid \mu_m, \sigma_m^2 I)$$
+也就是说，这个 toy 不是在验证“扩散采样工程有没有做好”，而是在验证：
 
-| 模态 | 中心 $\mu_m$ | 权重 $w_m$ | 标准差 $\sigma_m$ |
-|------|-------------|-----------|-----------------|
-| A | $(3, 3)$ | 0.30 | 0.5 |
-| B | $(-3, 3)$ | 0.25 | 0.5 |
-| C | $(-3, -3)$ | 0.20 | 0.5 |
-| D | $(3, -3)$ | 0.15 | 0.5 |
-| E | $(0, 0)$ | 0.10 | 0.8 |
+> **如果模型学的是一整个候选集合上的概率分布，而训练目标是让这个概率分布匹配奖励分布，那么它会不会天然比 reward maximization 更不容易 collapse。**
 
-各模态权重不同，形成一个**非均匀**的多模态分布，以测试方法能否按比例覆盖。
 
-### 2.2 生成模型："Mini-Diffusion" 通过 N 步去噪
+## 3. 最推荐的实验版本：离散网格上的连续评分模型
 
-为模拟扩散模型的逐步去噪过程，构建一个**简化的 N 步流匹配模型**：
+为了保证 Mac 上最容易跑通，我建议第一版不要做复杂 rollout sampler，而是做一个**离散 2D 网格上的概率模型**。
 
-```python
-class MiniFlowModel(nn.Module):
-    """简化版流匹配模型：N 步线性插值去噪"""
-    def __init__(self, hidden_dim=64, num_steps=10):
-        super().__init__()
-        self.num_steps = num_steps
-        # 速度场网络 v_θ(x_t, t)
-        self.velocity_net = nn.Sequential(
-            nn.Linear(2 + 1, hidden_dim),    # 输入: x_t (2D) + 时间步 t (1D)
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, 2),          # 输出: 速度向量 (2D)
-        )
+### 3.1 空间
 
-    def forward(self, x_t, t):
-        """预测速度场 v_θ(x_t, t)"""
-        t_emb = t.unsqueeze(-1) if t.dim() == 0 else t
-        inp = torch.cat([x_t, t_emb.expand(x_t.shape[0], 1)], dim=-1)
-        return self.velocity_net(inp)
-```
-
-**采样过程**（ODE/SDE）：
+定义二维区域：
 
 ```python
-def sample_ode(model, z, num_steps=10):
-    """ODE 采样：z → x_0"""
-    sigmas = torch.linspace(1.0, 0.0, num_steps + 1)
-    x = z
-    for i in range(num_steps):
-        t = sigmas[i]
-        v = model(x, t)
-        dt = sigmas[i+1] - sigmas[i]
-        x = x + dt * v
-    return x
-
-def sample_sde(model, z, noise_level=0.5, num_steps=10):
-    """SDE 采样（注入噪声，计算 log_prob）"""
-    sigmas = torch.linspace(1.0, 0.0, num_steps + 1)
-    x = z
-    total_log_prob = 0.0
-    for i in range(num_steps):
-        t = sigmas[i]
-        v = model(x, t)
-        dt = sigmas[i+1] - sigmas[i]
-        mean = x + dt * v
-        std = noise_level * abs(dt) ** 0.5
-        noise = torch.randn_like(x)
-        x = mean + std * noise
-        # log probability
-        log_prob = -0.5 * (noise ** 2).sum(-1) - x.shape[-1] * 0.5 * math.log(2 * math.pi)
-        total_log_prob += log_prob
-    return x, total_log_prob
+x, y in [-4, 4]
 ```
 
-### 2.3 树状采样（TreeMatch-RL 侧）
-
-在去噪的 $N=10$ 步中选 **2 个分叉点**（简化为 2 阶 $3^2=9$ 路径）：
+把它离散成一个网格，比如：
 
 ```python
-# 每条路径在分叉步注入独立 SDE 噪声
-# root → ODE → SDE_split_1 (×3) → ODE → SDE_split_2 (×3) → ODE → 9 leaves
-split_steps = [3, 7]      # 在第 3 步和第 7 步分叉
-noise_levels = [0.5, 0.3]  # 分叉步噪声强度
+grid_size = 121
 ```
 
-### 2.4 平行采样（Flow-GRPO 侧）
-
-每次独立采样 **K=9 条**平行路径（与 TreeMatch 相同数量），全程使用 SDE 采样。
-
----
-
-## 3. 对比的训练方法
-
-### 3.1 Method A: TreeMatch-RL（Softmax-TB 分布匹配）
+则总点数大约是：
 
 ```python
-# ═══ 算法核心 ═══
-# 1. 树状采样 → 9 条路径，各有 log_prob 和 reward
-# 2. Softmax-TB 损失：匹配 路径概率分布 与 奖励分布
-
-def softmax_tb_loss(path_log_probs, rewards, beta=15.0):
-    """Softmax-TB: 无需配分函数 Z"""
-    log_p = F.log_softmax(path_log_probs, dim=0)     # 路径概率归一化
-    log_r = F.log_softmax(beta * rewards, dim=0)      # 奖励分布归一化
-    return ((log_p - log_r) ** 2).sum()
+121 * 121 = 14641
 ```
 
-**关键特性**：
-- 目标是让路径概率 $\propto \exp(\beta R)$，按比例覆盖所有模态
-- 通过组内归一化消除了配分函数 $Z$
-- $\beta$ 控制多样性-质量权衡
+这对 Mac 来说非常轻。
 
-### 3.2 Method B: Flow-GRPO（奖励最大化）
+### 3.2 模型
+
+训练一个小 MLP：
 
 ```python
-# ═══ 算法核心 ═══
-# 1. 独立采样 → 9 条路径
-# 2. 计算 GRPO 优势并做 PPO-style 策略梯度
-
-def grpo_loss(log_probs, old_log_probs, advantages, clip_range=0.2):
-    """GRPO: 奖励最大化"""
-    ratio = torch.exp(log_probs - old_log_probs)
-    unclipped = -advantages * ratio
-    clipped = -advantages * torch.clamp(ratio, 1 - clip_range, 1 + clip_range)
-    return torch.maximum(unclipped, clipped).mean()
-
-# 优势计算: 组内归一化
-advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-4)
+f_theta: R^2 -> R
 ```
 
-**关键特性**：
-- 目标是最大化期望奖励 $\mathbb{E}[R]$
-- 通过 PPO-clip 防止过大步长
-- 没有分布匹配约束，容易趋向单一高奖励模态
+输入一个二维点 `x`，输出一个标量 `score_theta(x)`。
 
-### 3.3 Method C: Baseline（预训练模型 / 无 RL）
+这个分数不必强行解释成“严格的连续 log-density”，在 toy 里把它当成：
 
-直接使用未微调的生成模型，作为基准对照。
+> **该点对应的路径 logit / 路径概率的未归一化分数**
 
----
+就够了。
 
-## 4. 评估指标
+然后在整张网格上做 softmax：
 
-### 4.1 定量指标
+```python
+p_theta(x_i) = softmax(score_theta(x_i))
+```
 
-| 指标 | 计算方式 | 衡量内容 |
-|------|----------|---------|
-| **平均奖励** $\bar{R}$ | $\frac{1}{N}\sum R(x_i)$ | 生成质量 |
-| **模态覆盖率** (Mode Coverage) | 覆盖到的模态数 / 总模态数 | 多样性 |
-| **KL 散度** $D_{KL}(p_{gen} \| p_{target})$ | 生成分布与目标分布的 KL | 分布匹配精度 |
-| **Jensen-Shannon 散度** $D_{JS}$ | $\frac{1}{2}D_{KL}(p\|m) + \frac{1}{2}D_{KL}(q\|m)$ | 对称分布距离 |
-| **每模态比例误差** | $|\hat{w}_m - w_m|$ | 权重匹配精度 |
-| **样本多样性** (Entropy / Vendi Score) | 生成样本间的多样性 | 避免模式塌缩 |
+于是你就得到了一个定义在整个 2D 平面离散网格上的概率分布。
 
-### 4.2 定性可视化
+这一步特别重要，因为它让整个实验：
 
-1. **2D 散点图**：生成粒子 + 目标分布等高线叠加
-2. **训练曲线**：平均奖励、模态覆盖率 vs 训练步数
-3. **分布直方图**：各模态的实际生成频率 vs 目标比例
-4. **动态 GIF**：训练过程中粒子分布的演化
+- 不需要 diffusion
+- 不需要 MCMC
+- 不需要 rollout ODE/SDE
+- 不需要 proposal correction
 
----
+但仍然保留了你最想证明的那件事：
 
-## 5. 实验参数设置
+**模型学一个分布，而不是只学一个最优点。**
 
-### 5.1 通用参数
+
+## 4. 奖励函数设计
+
+## 4.1 多峰 reward landscape
+
+定义 5 个二维高斯峰，每个峰高度不同：
+
+| Mode | Center | Weight | Sigma |
+|---|---|---|---|
+| A | `(2.5, 2.5)` | `0.30` | `0.45` |
+| B | `(-2.5, 2.5)` | `0.25` | `0.45` |
+| C | `(-2.5, -2.5)` | `0.20` | `0.45` |
+| D | `(2.5, -2.5)` | `0.15` | `0.45` |
+| E | `(0.0, 0.0)` | `0.10` | `0.70` |
+
+定义真实目标分布：
+
+```python
+p_target(x) = sum_m w_m * N(x | mu_m, sigma_m^2 I)
+```
+
+### 4.2 最干净的 reward 定义
+
+为了让“真实分布”清晰、KL 也好算，我强烈建议把 reward 直接定义成：
+
+```python
+R(x) = log p_target(x)
+```
+
+这样有一个非常大的好处：
+
+如果你把 `beta = 1`，那么 Softmax-TB 的目标就变成：
+
+```python
+p_theta(x)  match  p_target(x)
+```
+
+也就是说，这个 toy 里你不是“间接地猜测” Softmax-TB 会不会多峰，而是：
+
+> 直接测试它能不能把学到的分布逼近一个已知的多峰真实分布。
+
+这会让你的实验非常干净，也更适合作为论文前的先验验证。
+
+
+## 5. 两种训练目标
+
+## 5.1 Method A：你的核心方法，Softmax-TB 分布匹配
+
+在整张网格上：
+
+```python
+score_i = f_theta(x_i)
+log_p_theta = log_softmax(score_i)
+log_p_target = log_softmax(beta * reward_i)
+```
+
+损失定义为：
+
+```python
+L_tb = mean((log_p_theta - log_p_target)^2)
+```
+
+如果：
+
+```python
+reward_i = log p_target(x_i)
+beta = 1
+```
+
+那么这个 loss 的目标就是直接让模型分布去逼近真实分布。
+
+### 这个方法想证明什么
+
+它证明的是：
+
+> 如果我们不是直接最大化奖励，而是让模型分布去匹配奖励诱导出的分布，那么模型会保留多模态结构，而不是全部坍缩到单一最高峰。
+
+
+## 5.2 Method B：奖励最大化 baseline
+
+对照组就用最简单、最像“mode collapse 来源”的目标：
+
+```python
+p_theta = softmax(score_i)
+L_max = -sum_i p_theta(x_i) * reward_i
+```
+
+也就是最大化：
+
+```python
+E_{x ~ p_theta}[R(x)]
+```
+
+这个目标的最优倾向非常清楚：
+
+- 它不关心分布是否按比例覆盖多峰
+- 它只关心平均 reward 尽量高
+- 所以它天然更倾向于把质量压到 reward 最高的峰附近
+
+这正好对应你想对比的“奖励最大化会更容易 collapse”。
+
+
+## 6. 为什么这个设计比之前版本更好
+
+相比之前那版 tree/diffusion toy，这一版更适合作为第一性验证，原因是：
+
+### 6.1 更贴近你真正想证明的命题
+
+你要证明的不是：
+
+- 树状采样是不是一定更好
+- ref / entropy 有没有帮助
+- diffusion toy 能不能训起来
+
+而是：
+
+> **路径分布匹配奖励分布，这个思想本身是否能导向多解、多峰覆盖。**
+
+这版实验正好只打这个靶心。
+
+### 6.2 在 Mac 上极容易实现
+
+这一版只需要：
+
+- `torch`
+- `numpy`
+- `matplotlib`
+
+不需要：
+
+- 多卡
+- MPS 特殊优化
+- 复杂 rollout
+- ODE/SDE log-prob
+- reward model
+
+### 6.3 结果特别容易解释
+
+因为真实目标分布就是你自己定义的 Gaussian mixture，所以：
+
+- 看图就知道有没有 collapse
+- 算 KL / JS 也容易
+- 不会陷入“大模型训练里到底是谁在起作用”的混杂解释
+
+
+## 7. 具体可执行实验流程
+
+## 7.1 构建固定网格
+
+```python
+xs = torch.linspace(-4, 4, 121)
+ys = torch.linspace(-4, 4, 121)
+grid = {(x_i, y_j)}
+```
+
+得到全部候选点：
+
+```python
+X in R^{N x 2}, N = 14641
+```
+
+## 7.2 计算真实 reward / 真实分布
+
+对每个点算：
+
+```python
+reward_i = log p_target(x_i)
+```
+
+然后归一化得到真实离散分布：
+
+```python
+p_target_grid = softmax(reward_i)   # beta = 1 时
+```
+
+## 7.3 训练 Softmax-TB 模型
+
+每一步：
+
+1. MLP 输出全网格 `score_i`
+2. 计算 `log_p_theta = log_softmax(score_i)`
+3. 计算 `log_p_target = log_softmax(beta * reward_i)`
+4. 最小化 `mean((log_p_theta - log_p_target)^2)`
+
+## 7.4 训练 reward-max baseline
+
+每一步：
+
+1. MLP 输出全网格 `score_i`
+2. `p_theta = softmax(score_i)`
+3. 最大化 `sum p_theta * reward`
+
+## 7.5 训练后 rollout
+
+训练完成后，从学到的离散分布里采样很多点：
+
+```python
+x ~ Categorical(p_theta)
+```
+
+比如采：
+
+```python
+num_samples = 10000
+```
+
+然后把采样点画成散点图或 2D heatmap。
+
+这里的“rollout”不再是 diffusion rollout，而是：
+
+> 从训练好的路径概率分布里抽样很多二维点，检查它是不是多峰。
+
+
+## 8. 评估指标
+
+### 8.1 最核心指标
+
+1. **KL 散度**
+
+```python
+KL(p_theta || p_target)
+```
+
+这个是你最想要的主指标，因为它直接回答：
+
+> 学到的分布是不是接近真实多峰分布。
+
+2. **JS 散度**
+
+用于更稳定地看分布距离。
+
+3. **Mode coverage**
+
+把每个采样点分配到最近的峰，统计：
+
+- 覆盖到多少个峰
+- 每个峰的样本比例是多少
+
+4. **平均奖励**
+
+这个可以保留，但它不是最关键指标。
+
+### 8.2 预期现象
+
+### Softmax-TB
+
+- KL 更低
+- JS 更低
+- 覆盖多个峰
+- 峰的样本比例更接近真实权重
+
+### Reward maximization
+
+- 平均奖励可能不低
+- 但会明显偏向最高峰
+- KL 更大
+- 多样性更差
+
+
+## 9. 第一版推荐超参
 
 ```python
 config = {
-    # 模型
+    "seed": 42,
+    "device": "mps_or_cpu",
+    "grid_size": 121,
     "hidden_dim": 64,
-    "num_steps": 10,              # 去噪步数
-    "noise_level": 0.5,           # SDE 噪声级别
-
-    # 训练
-    "learning_rate": 1e-3,
-    "num_epochs": 500,
-    "batch_size_per_sample": 32,  # 每次采样的初始噪声个数(prompt维度)
-    "group_size": 9,              # 每组路径数 (K=9, 3²)
-
-    # 评估
-    "eval_samples": 2000,         # 评估用粒子数
-    "eval_interval": 50,          # 每 50 epoch 评估
+    "lr": 1e-3,
+    "train_steps": 1000,
+    "beta": 1.0,
+    "eval_samples": 10000,
 }
 ```
 
-### 5.2 TreeMatch-RL 特有参数
+### 为什么这么设
 
-```python
-treematch_config = {
-    "beta": 15.0,                 # 温度参数
-    "lambda_entropy": 0.01,       # 粒子熵系数
-    "lambda_ref": 0.1,            # 参考约束系数
-    "split_steps": [3, 7],        # 分叉步
-    "noise_levels": [0.5, 0.3],   # 分叉噪声
-    "is_clip_range": 0.2,         # IS 裁剪范围
-}
+1. `grid_size=121`
+   - 足够平滑
+   - 对 Mac 依然很轻
+
+2. `hidden_dim=64`
+   - 足够学 5 个峰
+   - 不会太重
+
+3. `lr=1e-3`
+   - 对小 MLP 一般很稳
+
+4. `train_steps=1000`
+   - 通常足够看到明显分布差异
+
+5. `beta=1.0`
+   - 让 Softmax-TB 的目标直接对应真实混合分布
+
+
+## 10. Mac 落地建议
+
+建议直接做成一个单文件：
+
+```text
+experiments/toy_softmax_tb/run_toy.py
 ```
 
-### 5.3 Flow-GRPO 特有参数
+里面包含：
 
-```python
-grpo_config = {
-    "clip_range": 0.2,            # PPO clip
-    "adv_clip_max": 5.0,          # 优势裁剪
-    "beta_kl": 0.01,              # KL 正则系数 (可选)
-}
-```
+- Gaussian mixture target
+- reward 计算
+- MLP
+- Softmax-TB trainer
+- reward-max trainer
+- evaluation
+- plotting
 
----
-
-## 6. 实验步骤
-
-### Phase 1: 环境搭建（0.5 天）
+运行方式：
 
 ```bash
-# 1. 创建实验目录
-mkdir -p experiments/particle_matching
-
-# 2. 实现基础组件
-#    - reward_fn.py: 高斯混合奖励函数
-#    - mini_flow.py: 简化版流匹配模型
-#    - tree_sampler_2d.py: 2D 树状采样器
-#    - grpo_trainer.py: Flow-GRPO 训练器
-#    - treematch_trainer.py: TreeMatch-RL 训练器
-#    - eval_metrics.py: 评估指标计算
-#    - visualize.py: 可视化工具
+python experiments/toy_softmax_tb/run_toy.py --method softmax_tb --device mps
+python experiments/toy_softmax_tb/run_toy.py --method reward_max --device mps
+python experiments/toy_softmax_tb/run_toy.py --method both --device mps
 ```
 
-### Phase 2: 核心实验（1 天）
+设备逻辑：
 
 ```python
-# ═══ 实验 1: 基础对比 ═══
-# 在标准 5 模态设定下跑 500 epochs
-
-# ═══ 实验 2: β 消融 ═══
-# TreeMatch-RL: β ∈ {1, 5, 10, 15, 25, 50}
-# 验证温度参数对分布匹配的影响
-
-# ═══ 实验 3: 模态数量扩展 ═══
-# 目标分布模态数: {2, 5, 10, 20}
-# 观察随模态增加，两种方法的覆盖差异
-
-# ═══ 实验 4: 非均匀权重极端场景 ═══
-# 设置极端权重: [0.6, 0.2, 0.1, 0.05, 0.05]
-# 验证 TreeMatch-RL 能否按比例精确匹配
+if torch.backends.mps.is_available():
+    device = "mps"
+else:
+    device = "cpu"
 ```
 
-### Phase 3: 分析与可视化（0.5 天）
 
-生成以下关键图表用于论文：
+## 11. 这版实验写进论文时怎么表述
 
-1. **Figure: 粒子分布对比图** (2×3 网格)
-   - 行1: TreeMatch-RL / Flow-GRPO / Target
-   - 行2: 对应的密度热力图
+你可以把这个 toy 的论点写得非常清楚：
 
-2. **Figure: 训练监控曲线** (1×3)
-   - 平均奖励 vs 步数
-   - 模态覆盖率 vs 步数
-   - JS 散度 vs 步数
+> 为了隔离验证 TreeMatch-RL 的核心思想，我们设计了一个二维合成实验。在该实验中，一个二维点被视作一条“路径”，模型学习该点的未归一化路径概率分数。我们比较了两种目标：  
+> 1. 用 Softmax-TB 让模型概率分布匹配奖励诱导分布；  
+> 2. 直接最大化期望奖励。  
+> 结果表明，前者可以恢复多峰目标分布，而后者更易坍缩到少数高奖励峰值。  
 
-3. **Figure: β 消融热力图**
-   - x 轴: β 值，y 轴: 各指标
+这样你就把：
 
-4. **Table: 最终指标对比**
+- Softmax-TB 的核心思想
+- 多样性不是靠 trick 硬撑
+- reward maximization 易 collapse
 
----
+这三件事讲清楚了。
 
-## 7. 预期结果
 
-### 7.1 TreeMatch-RL 预期优势
+## 12. 第二阶段再加什么
 
-| 指标 | TreeMatch-RL | Flow-GRPO |
-|------|-------------|-----------|
-| 模态覆盖率 | **5/5 (100%)** | 2-3/5 (40-60%) |
-| JS 散度 ↓ | **低** | 高 |
-| 模态权重误差 ↓ | **低** | 高（倾斜） |
-| 平均奖励 | 适中 | **高**(但不代表真正好) |
+如果第一版跑通，第二阶段再加：
 
-### 7.2 直觉解释
+1. `beta in {0.5, 1.0, 2.0, 5.0}` 消融
+2. 峰数从 `5 -> 8 -> 12`
+3. 峰高差异更极端的场景
+4. 再做一个“tree candidate set vs flat candidate set”的训练 trick 对比
 
-- **Flow-GRPO** 追求奖励最大化，会把大部分粒子堆到模态 A (权重最大)，忽略 D 和 E
-- **TreeMatch-RL** 要求 $\pi \propto \exp(\beta R)$，会按比例分配粒子到所有 5 个模态
-- TreeMatch-RL 的平均奖励可能略低于 GRPO，但其分布形状更接近目标
+注意这里的顺序很重要：
 
----
+- **第一阶段**：证明 `Softmax-TB` 核心 idea 成立
+- **第二阶段**：再说明 tree sampling 等 trick 如何帮助训练
 
-## 8. 代码组织结构
 
-```
-experiments/particle_matching/
-├── config.py               # 所有超参数配置
-├── reward_fn.py             # 高斯混合奖励函数
-├── mini_flow.py             # 简化版 N 步流匹配模型
-├── samplers/
-│   ├── tree_sampler.py      # TreeMatch 树状 SDE 采样
-│   └── flat_sampler.py      # Flow-GRPO 平行 SDE 采样
-├── trainers/
-│   ├── treematch_trainer.py # Softmax-TB 训练循环
-│   └── grpo_trainer.py      # GRPO 训练循环
-├── eval_metrics.py          # KL, JS, 模态覆盖率等
-├── visualize.py             # 散点图、曲线、热力图
-├── run_experiment.py        # 主入口: 跑全部实验
-└── README.md                # 实验说明
-```
+## 13. 最终建议
 
----
+如果你这周就想在 Mac 上把 toy 跑出来，我建议你就按这个版本做：
 
-## 9. 与论文的关联
+- 二维 Gaussian mixture
+- reward = `log p_target`
+- MLP 直接输出点分数
+- Softmax-TB vs reward maximization
+- 用 KL / JS / mode coverage 做结论
 
-本实验直接验证了论文 **§1 Introduction** 和 **§4.1 Softmax-TB** 的核心论断：
+这版是我认为：
 
-> "TreeMatch-RL 旨在实现'奖励分布匹配'，即强制模型生成的路径概率与该路径获得的指数化奖励成正比 ($\pi \propto \exp(\beta R)$)。"
-
-具体地：
-
-- **Softmax-TB 损失** (§4.1 公式 11) 在 2D 设定中可直接可视化其优化效果
-- **树状采样** (§4.2) 的前缀共享机制在 2D 同样适用且可视化分叉过程
-- **β 消融** 对应论文中温度参数对多样性-质量权衡的讨论
-- 结果可直接放入论文 Appendix 或 §5 Experiments 作为 "Synthetic Experiment" 小节
-
----
-
-## 10. 补充说明
-
-### 10.1 与扩散模型实验的互补性
-
-| | 粒子匹配 (Synthetic) | 扩散模型 (SD3.5/Flux) |
-|---|---|---|
-| **验证范围** | 核心算法 (Softmax-TB) | 全系统 (含工程优化) |
-| **可视化** | 直观 2D 散点 | 图像需人工评估 |
-| **时间成本** | 分钟级 | 天/周级 |
-| **论文位置** | Appendix / 辅助验证 | 主实验 |
-
-### 10.2 可选扩展
-
-1. **高维验证 (8D~64D)**：增加维度，观察两方法的可扩展性
-2. **动态奖励景观**：训练过程中改变奖励分布，测试自适应能力
-3. **与 DAG 方法对比**：加入细致平衡 (DB) 方法作为额外 baseline
-4. **收敛速度分析**：绘制 "到达 $X\%$ 模态覆盖率所需步数" 的对比图
+> **最贴合你当前论文核心观点、同时实现成本最低、最不容易被工程细节干扰的 toy experiment。**

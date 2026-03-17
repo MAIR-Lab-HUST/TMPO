@@ -36,7 +36,7 @@ class ReferenceConstraintLoss(nn.Module):
         norm_current = current_log_probs / max(num_sde_steps, 1)
         norm_ref = ref_log_probs / max(num_sde_steps, 1)
 
-        # L2 残差
-        loss = ((norm_current - norm_ref) ** 2).sum()
+        # L2 残差 (Bug6 修复: .sum() → .mean(), 使损失与路径数无关)
+        loss = ((norm_current - norm_ref) ** 2).mean()
 
         return loss

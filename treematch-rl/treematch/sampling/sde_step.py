@@ -39,6 +39,7 @@ def flow_sde_step(
         std: scalar, SDE 标准差 σ_t √(-dt)
     """
     dt = sigma_next - sigma  # 负值 (时间反向)
+    min_logprob_noise_scale = 1e-2
 
     # 噪声标准差: std_dev_t = √(σ / (1-σ)) · η
     # σ/(1-σ) 是信噪比的倒数
@@ -83,15 +84,20 @@ def flow_sde_step(
         prev_sample = mean + noise_scale * noise
 
         # 对数概率: log N(x_{t-Δt} | mean, noise_scale²)
+        # 归一化为 per-dimension 均值 → 值域 O(1), 避免 bf16 下 d*log(σ) ≈ -1e5 引发精度崩溃
         if noise_scale > 1e-8:
-            d = latents.numel() // latents.shape[0]  # 特征维度
+            # 数值稳定: 当 noise_scale 极小(接近 0)时,
+            # log_prob 对 mean 的梯度尺度 ~ 1/noise_scale, 会在 bf16 下爆炸。
+            # 仅在对数概率计算中使用下界, 不改变实际采样噪声。
+            noise_scale_eff = max(noise_scale, min_logprob_noise_scale)
+            diff = prev_sample - mean
             log_prob = (
-                -((prev_sample - mean) ** 2).sum() / (2.0 * noise_scale ** 2)
-                - d * math.log(noise_scale)
-                - 0.5 * d * math.log(2.0 * math.pi)
-            )
+                -diff.pow(2).mean(dim=tuple(range(1, diff.ndim))) / (2.0 * noise_scale_eff ** 2)
+                - math.log(noise_scale_eff)
+                - 0.5 * math.log(2.0 * math.pi)
+            )  # (B,)  per-dim 均值, 量级约 O(1)
         else:
-            log_prob = torch.tensor(0.0, device=latents.device)
+            log_prob = torch.zeros(latents.shape[0], device=latents.device)
 
         std = torch.tensor(noise_scale, device=latents.device)
 
@@ -127,6 +133,7 @@ def recompute_log_prob(
         sqrt_dt: float, √(-dt)
     """
     dt = sigma_next - sigma
+    min_logprob_noise_scale = 1e-2
     snr_inv = sigma / (1.0 - sigma + 1e-8)
     std_dev_t = math.sqrt(max(snr_inv, 0.0)) * eta
 
@@ -139,13 +146,22 @@ def recompute_log_prob(
     noise_scale = std_dev_t * sqrt_dt
 
     if noise_scale > 1e-8:
-        d = latent_in.numel() // latent_in.shape[0]
+        # 训练稳定性关键修复:
+        # loss 值可以保持有限, 但 d(log_prob)/d(mean) ~ 1/noise_scale
+        # 在末段小噪声步会出现梯度奇异放大, 触发 rank 局部 NaN。
+        # 这里对 log_prob 的噪声尺度做下界, 抑制梯度爆炸。
+        noise_scale_eff = max(noise_scale, min_logprob_noise_scale)
+        diff = latent_out - mean
+        # diff clamp: 防止 eta>1 或 bf16/fp32 混合精度的系统性偏差导致 diff 异常大
+        # 正常单位高斯噪声: diff/noise_scale ~ N(0,1), |diff| 应 << 5*noise_scale
+        diff = torch.clamp(diff, min=-10.0 * noise_scale_eff, max=10.0 * noise_scale_eff)
+        # per-dimension 均值 (与 flow_sde_step 保持一致), 值域 O(1)
         log_prob = (
-            -((latent_out - mean) ** 2).sum() / (2.0 * noise_scale ** 2)
-            - d * math.log(noise_scale)
-            - 0.5 * d * math.log(2.0 * math.pi)
-        )
+            -diff.pow(2).mean(dim=tuple(range(1, diff.ndim))) / (2.0 * noise_scale_eff ** 2)
+            - math.log(noise_scale_eff)
+            - 0.5 * math.log(2.0 * math.pi)
+        )  # (B,)
     else:
-        log_prob = torch.tensor(0.0, device=latent_in.device)
+        log_prob = torch.zeros(latent_in.shape[0], device=latent_in.device)
 
     return log_prob, mean, std_dev_t, sqrt_dt

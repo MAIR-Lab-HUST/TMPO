@@ -38,15 +38,24 @@ class ParticleEntropyLoss(nn.Module):
         Returns:
             loss: scalar, 越大表示路径间越相似 (需要最小化)
         """
+        features = features.float()
         K = features.shape[0]
         if K < 2:
             return torch.tensor(0.0, device=features.device)
+
+        # 数值稳定: 批内标准化后再计算距离, 避免 RBF 指数项长期下溢到 0。
+        feat_mean = features.mean(dim=0, keepdim=True)
+        feat_std = features.std(dim=0, keepdim=True, unbiased=False)
+        features = (features - feat_mean) / (feat_std + 1e-6)
 
         # 成对距离矩阵: (K, K)
         dists_sq = torch.cdist(features, features, p=2.0).pow(2)
 
         # RBF 核: exp(-d² / h)
-        rbf = torch.exp(-dists_sq / (self.bandwidth + 1e-8))
+        exponent = -dists_sq / (self.bandwidth + 1e-8)
+        # float32 下 exp(x) 当 x << -80 时易直接下溢到 0。
+        exponent = torch.clamp(exponent, min=-60.0, max=0.0)
+        rbf = torch.exp(exponent)
 
         # 去掉对角线 (自身距离 = 0, exp(0) = 1)
         mask = ~torch.eye(K, dtype=torch.bool, device=features.device)

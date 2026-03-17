@@ -39,17 +39,12 @@ class SoftmaxTBLoss(nn.Module):
         Returns:
             loss: scalar, Softmax-TB 损失
         """
-        # 路径概率的 softmax 归一化
-        # log_softmax 比手动计算更数值稳定
-        log_p_normalized = F.log_softmax(path_log_probs, dim=0)
-
-        # 奖励的指数化 softmax
-        log_r_normalized = F.log_softmax(self.beta * rewards, dim=0)
-
-        # 逐路径残差平方和
+        lp = path_log_probs.float()
+        rw = rewards.float()
+        log_p_normalized = F.log_softmax(lp, dim=0)
+        log_r_normalized = F.log_softmax(self.beta * rw, dim=0)
         residuals = log_p_normalized - log_r_normalized
         loss = (residuals ** 2).sum()
-
         return loss
 
     def forward_per_path(
@@ -59,9 +54,14 @@ class SoftmaxTBLoss(nn.Module):
     ) -> torch.Tensor:
         """返回逐路径的残差平方（用于 IS 加权）
 
+        全程在 fp32 计算, 避免 bf16 下 log_softmax 精度损失导致 NaN。
+
         Returns:
             per_path_loss: (K,) 每条路径的 (log_p - log_r)²
         """
-        log_p = F.log_softmax(path_log_probs, dim=0)
-        log_r = F.log_softmax(self.beta * rewards, dim=0)
+        # 强制 fp32: bf16 的 log_softmax 在值域差异大时有明显误差
+        lp = path_log_probs.float()
+        rw = rewards.float()
+        log_p = F.log_softmax(lp, dim=0)
+        log_r = F.log_softmax(self.beta * rw, dim=0)
         return (log_p - log_r) ** 2

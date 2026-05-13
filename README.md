@@ -1,307 +1,287 @@
-# TMPO
+<div align="center">
 
-> **Tree-based Distribution Matching Policy Optimization for Diverse and Efficient Diffusion Model Alignment**
+# TMPO: Trajectory Matching Policy Optimization
 
-## Key Features
+### Diverse and Efficient Diffusion Model Alignment via Trajectory-Level Reward Distribution Matching
 
-- **Softmax-TB Distribution Matching** — Replaces traditional reward maximization with GFlowNet trajectory balance for multi-modal coverage
-- **3-level 27-branch Tree Sampling** — Prefix sharing reduces computation; only 3 SDE steps inject noise
-- **Beta Distribution Adaptive Scheduling** — Dynamically adjusts split positions and noise levels based on online reward mean
-- **RatioNorm IS** — Eliminates E[log w] < 0 bias in Flow Matching, supports multiple policy updates
-- **8xH200 Optimized** — FSDP SHARD_GRAD_OP (ZeRO-2) + LoRA + bf16
+[![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/Chael-Chael/TMPO/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/Chael-Chael/TMPO?style=flat-square&logo=github)](https://github.com/Chael-Chael/TMPO/network/members)
+[![Last commit](https://img.shields.io/github/last-commit/Chael-Chael/TMPO?style=flat-square&logo=github)](https://github.com/Chael-Chael/TMPO/commits/main)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.3%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Diffusers](https://img.shields.io/badge/HuggingFace-Diffusers-FFD21E?style=flat-square&logo=huggingface&logoColor=black)](https://github.com/huggingface/diffusers)
+[![Preprint](https://img.shields.io/badge/Paper-NeurIPS_2026_Preprint-b31b1b?style=flat-square)](#citation)
 
----
+[Highlights](#highlights) | [Method](#method) | [Results](#results) | [Get Started](#get-started) | [Code Map](#code-map) | [Star History](#star-history) | [Citation](#citation)
 
-## Project Structure
-
-```
-TMPO/
-├── accelerate_configs/         # Accelerate distributed configs
-│   └── fsdp_small.yaml         # FSDP FULL_SHARD
-├── config/                     # Training configs (YAML)
-│   ├── sd35m_lora.yaml         # SD3.5-Medium LoRA
-│   └── flux_lora.yaml          # Flux LoRA
-├── tmpo/                       # Core code
-│   ├── train.py                # Main training entry + loop
-│   ├── sampling/
-│   │   ├── sde_step.py         # SDE noise stepping + log_prob
-│   │   ├── scheduler.py        # Beta distribution adaptive scheduler
-│   │   └── tree_sampler.py     # 3-level 27-branch tree sampler
-│   ├── losses/
-│   │   ├── softmax_tb.py       # Softmax-TB core loss
-│   │   ├── ratio_norm.py       # RatioNorm IS weight computation
-│   │   ├── entropy.py          # RBF particle entropy regularization
-│   │   ├── reference.py        # Reference model constraint loss
-│   │   └── total_loss.py       # Total loss assembly + diagnostics
-│   ├── rewards/
-│   │   ├── compute.py          # Multi-reward parallel compute + advantage_aggr fusion
-│   │   ├── hpsv2.py            # HPSv2 (human preference score)
-│   │   ├── clipscore.py        # CLIP Score (text-image alignment)
-│   │   ├── pickscore.py        # PickScore (preference alignment)
-│   │   └── geneval_http.py     # GenEval HTTP client
-│   ├── eval/
-│   │   ├── evaluator.py        # Inline evaluation during training
-│   │   └── diversity.py        # L-GMD and cosine diversity metrics
-│   └── utils/
-│       ├── distributed.py      # AllGather + per-prompt normalization
-│       ├── checkpoint.py       # LoRA / full-param checkpoint management
-│       ├── ema.py              # EMA weight smoothing
-│       └── logging_.py         # Logging utilities
-├── scripts/
-│   ├── train_flux.sh
-│   └── setup_server.sh
-└── data/
-    └── pickapic_prompts.json   # Prompt data (user-provided)
-```
+</div>
 
 ---
 
-## Environment Setup
+TMPO is a reinforcement learning framework for aligning diffusion and flow-matching models without collapsing generation diversity. Instead of maximizing a scalar reward directly, TMPO matches the policy distribution over complete denoising trajectories to a reward-induced Boltzmann distribution. The result is a mode-covering objective that keeps multiple plausible high-reward outputs alive while still improving downstream reward.
+
+The implementation in this repository provides the training code for **Softmax Trajectory Balance (Softmax-TB)**, **Dynamic Stochastic Tree Sampling**, multi-reward aggregation, inline evaluation, and distributed LoRA fine-tuning for SD3.5-Medium and FLUX-style models.
+
+## News
+
+- **2026.05** - Initial TMPO code release with FLUX/SD3.5 training configs, tree sampling, Softmax-TB loss, multi-reward wrappers, and inline evaluation.
+- **2026.05** - Preprint: *TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Alignment*.
+
+## Highlights
+
+- **Reward distribution matching, not reward maximization.** TMPO optimizes a trajectory-level distribution target, reducing the mode-seeking behavior that drives visual mode collapse.
+- **Softmax Trajectory Balance.** The loss matches normalized trajectory log-probabilities to `softmax(beta * reward)`, avoiding an explicit global partition function.
+- **Dynamic Stochastic Tree Sampling.** Denoising prefixes are shared, then trajectories branch at scheduled SDE steps; with `k=3` and three branch levels, one prompt yields up to 27 terminal trajectories.
+- **Multi-reward training.** HPSv2, CLIPScore, PickScore, ImageReward, GenEval, OCR, and aesthetic scoring can be combined with per-group normalization.
+- **Scalable alignment.** The code supports LoRA, FSDP, bf16, gradient diagnostics, checkpointing, EMA, and inline evaluation.
+- **Paper-level outcome.** On FLUX.1-dev, TMPO reports a 9.1% average diversity improvement over prior state-of-the-art methods while reaching competitive or best downstream rewards and reducing training time by up to 27%.
+
+## Demo
+
+<p align="center">
+  <img src="assets/readme/tmpo-overview.svg" alt="TMPO framework overview" width="94%">
+</p>
+
+## Method
+
+### Why Distribution Matching?
+
+Standard diffusion RL methods usually optimize expected reward. This is effective for improving a single metric, but it is intrinsically mode-seeking: when many outputs are acceptable, the model can over-concentrate on a small subset that exploits the proxy reward. TMPO reframes alignment as matching a reward-induced trajectory distribution, so high-reward alternatives can all receive probability mass.
+
+### Softmax Trajectory Balance
+
+For `K` trajectories sampled from the same prompt group, TMPO computes cumulative trajectory log-probabilities and terminal rewards:
+
+```text
+log_p_i = log P_theta(tau_i)
+target_i = log softmax(beta * R(tau_i))
+policy_i = log softmax(log_p_i)
+advantage_i = target_i - policy_i
+```
+
+This group normalization cancels the intractable partition terms and makes the objective directly optimizable over observed trajectories. In code, the core implementation lives in [`tmpo/losses/softmax_tb.py`](tmpo/losses/softmax_tb.py) and is assembled with clipped importance sampling and reference constraints in [`tmpo/losses/total_loss.py`](tmpo/losses/total_loss.py).
+
+### Dynamic Stochastic Tree Sampling
+
+Naively sampling many full denoising trajectories is expensive. TMPO instead shares deterministic denoising prefixes and injects stochastic SDE branches only at scheduled split points. The tree sampler supports:
+
+- branch factor `tree.k`
+- `tree.branch_levels`
+- `tree.max_leaves`
+- fixed or progress-aware schedules
+- FLUX dynamic sigma shift
+- chunked log-prob recomputation for memory control
+
+The implementation is in [`tmpo/sampling/tree_sampler.py`](tmpo/sampling/tree_sampler.py) and [`tmpo/sampling/scheduler.py`](tmpo/sampling/scheduler.py).
+
+## Results
+
+The following compact table summarizes key FLUX.1-dev results from the preprint. Lower time is better; higher reward and diversity metrics are better.
+
+| Protocol | Primary metric | TMPO time / iter | Preference score | Diversity |
+|---|---:|---:|---:|---:|
+| Compositional generation | GenEval `0.949` | `91.9s` | PickScore `22.901` | LGMD `0.131`, Cos.Div. `0.247` |
+| Visual text rendering | OCR Acc. `0.935` | `76.3s` | HPSv2 `0.310`, PickScore `22.309` | LGMD `0.110`, Cos.Div. `0.241` |
+| Human preference alignment | PickScore `24.277` | `68.3s` | HPSv2 `0.373`, ImgReward `1.610` | LGMD `0.204`, Cos.Div. `0.252` |
+
+TMPO is designed to improve the trade-off between reward, diversity, and efficiency rather than optimizing one scalar score at the expense of all others.
+
+## Get Started
+
+### 1. Clone
 
 ```bash
-# 1. Create conda environment
+git clone https://github.com/Chael-Chael/TMPO.git
+cd TMPO
+```
+
+### 2. Create Environment
+
+```bash
 conda create -n tmpo python=3.10 -y
 conda activate tmpo
 
-# 2. Install PyTorch (CUDA 12.1)
 pip install torch==2.3.0 torchvision==0.18.0 --index-url https://download.pytorch.org/whl/cu121
-
-# 3. Install core dependencies
-pip install accelerate==0.33.0 diffusers==0.30.0 transformers==4.44.0
-
-# 4. Install LoRA + reward model dependencies
-pip install peft open_clip_torch
-
-# 5. Install utility libraries
-pip install pyyaml Pillow numpy wandb
-
-# 6. Verify GPU
-python -c "
-import torch
-print(f'PyTorch: {torch.__version__}')
-print(f'CUDA: {torch.version.cuda}')
-print(f'GPUs: {torch.cuda.device_count()}')
-"
+pip install accelerate==0.33.0 diffusers==0.30.0 transformers==4.44.0 peft
+pip install open_clip_torch requests pyyaml Pillow numpy wandb
 ```
 
----
+Optional reward dependencies:
 
-## Dataset
-
-Training uses a JSON-format prompt list. Each step samples one prompt and generates 27 paths for reward computation.
-
-**Supported formats**:
-
-```json
-// Format A: plain list
-["a photo of a cat", "a painting of mountains", ...]
-
-// Format B: list of dicts
-[{"prompt": "a photo of a cat"}, {"prompt": "a painting of mountains"}, ...]
-
-// Format C: key-value pairs
-{"001": "a photo of a cat", "002": "a painting of mountains", ...}
+```bash
+pip install image-reward
+pip install git+https://github.com/openai/CLIP.git
 ```
 
-**Recommended source**: [Pick-a-Pic](https://huggingface.co/datasets/yuvalkirstain/pickapic_v2) prompt subset.
+For a more exhaustive setup path, see [`setup_guide.md`](setup_guide.md).
 
-Configuration:
-```yaml
-dataset:
-  data_json_path: "data/pickapic_prompts.json"
-  resolution: [512, 512]   # H x W; SD3.5: 512, Flux: 720
+### 3. Prepare Models and Rewards
+
+SD3.5-Medium requires Hugging Face access approval:
+
+```bash
+huggingface-cli login
+mkdir -p models/sd35m
+huggingface-cli download stabilityai/stable-diffusion-3.5-medium --local-dir ./models/sd35m
 ```
 
----
-
-## Reward Models
-
-TMPO uses **multi-reward parallel computation + advantage_aggr fusion**:
-
-### Supported Reward Models
-
-| Model | Dimension | Range | Weight |
-|-------|-----------|-------|--------|
-| **HPSv2** | Human preference (composition, detail, quality) | ~[0.2, 0.35] | 0.6 |
-| **CLIP Score** | Text-image alignment (prompt matching) | ~[20, 35] | 0.4 |
-| **PickScore** | Preference alignment | model-dependent | optional |
-| **ImageReward** | Image-text quality | model-dependent | optional |
-| **GenEval HTTP** | Compositional semantic rules | server-returned | optional |
-
-### Fusion Strategy: `advantage_aggr` (recommended)
-
-Each reward model is **independently normalized then weighted-summed**, resolving scale differences:
-
-```
-HPSv2:     [0.25, 0.28, 0.30, ...]  -> normalize -> [-1.2, 0.1, 1.1, ...]  x 0.6
-CLIP:      [22.1, 25.3, 28.7, ...]  -> normalize -> [-1.0, 0.2, 1.5, ...]  x 0.4
-                                                                              -----
-Final advantage:                                                   weighted sum -> (K,)
-```
-
-### Reward Weight Preparation
+HPSv2 / OpenCLIP reward weights:
 
 ```bash
 mkdir -p reward_ckpt
-
-# HPSv2 weights (required)
-# Download HPS_v2.1_compressed.pt and open_clip_pytorch_model.bin to reward_ckpt/
-
-# CLIP Score
-# Config:
-#   clip_score_model_path: "openai/clip-vit-large-patch14"
-
-# PickScore (auto-downloaded from HuggingFace by default)
-# Config:
-#   pickscore_processor_path: "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
-#   pickscore_model_path: "yuvalkirstain/PickScore_v1"
-
-# ImageReward (explicit dependency install recommended)
-pip install image-reward
-pip install git+https://github.com/openai/CLIP.git
-
-# GenEval HTTP (training side only sends requests)
-# Config:
-#   geneval_url: ""
-# Note: you must start the reward server separately
+hf download xswu/HPSv2 HPS_v2.1_compressed.pt --local-dir ./reward_ckpt/
+hf download laion/CLIP-ViT-H-14-laion2B-s32B-b79K open_clip_pytorch_model.bin --local-dir ./reward_ckpt/
 ```
 
-### Reward Configuration Example
+Set the corresponding paths in the YAML config before training:
 
 ```yaml
 reward:
-    models: ["hpsv2", "pickscore", "imagereward", "geneval"]
-    weights: [0.4, 0.2, 0.2, 0.2]
-    mix_strategy: "advantage_aggr"
-
-    hps_path: "./reward_ckpt/HPS_v2.1_compressed.pt"
-    hps_clip_path: "./reward_ckpt/open_clip_pytorch_model.bin"
-    clip_score_model_path: "./reward_ckpt/clip-vit-large-patch14"
-
-    pickscore_processor_path: "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
-    pickscore_model_path: "yuvalkirstain/PickScore_v1"
-
-    imagereward_model_name: "ImageReward-v1.0"
-    imagereward_med_config: null
-
-    geneval_url: ""
-    geneval_batch_size: 64
-    geneval_timeout: 120
-    geneval_only_strict: true
-    geneval_retries: 6
+  hps_path: "./reward_ckpt/HPS_v2.1_compressed.pt"
+  hps_clip_path: "./reward_ckpt/open_clip_pytorch_model.bin"
 ```
 
----
+### 4. Prepare Prompts
 
-## Training
-
-### Quick Start
+Training expects a JSON prompt file. Supported formats include a list of strings, a list of objects with a `prompt` field, or a dictionary of id-to-prompt pairs.
 
 ```bash
-# Default config (SD3.5-Medium LoRA)
-bash scripts/train_flux.sh
-
-# Manual launch
-accelerate launch \
-    --config_file accelerate_configs/fsdp_small.yaml \
-    --num_processes 4 \
-    tmpo/train.py \
-    --config config/sd35m_lora.yaml \
-    --lr 1e-5 --beta 15.0
+mkdir -p data
+python - <<'PY'
+import json
+prompts = [
+    "a cinematic photo of a robot doing yoga in a minimalist studio",
+    "a vintage farmer's almanac header with rustic seed illustrations",
+    "a wooden hiking sign reading To Summit 1 Mile on a misty trail",
+] * 100
+with open("data/pickapic_prompts.json", "w", encoding="utf-8") as f:
+    json.dump(prompts, f, indent=2)
+PY
 ```
 
-### Distributed Configuration
+Update `dataset.data_json_path` in your config if you use a different path.
 
-| Setting | Value | Description |
-|---------|-------|-------------|
-| `fsdp_sharding_strategy` | `SHARD_GRAD_OP` | Gradient + optimizer state sharding, full model params retained |
-| `fsdp_backward_prefetch` | `BACKWARD_PRE` | Backward prefetch for bandwidth utilization |
-| `fsdp_activation_checkpointing` | `true` | Activation checkpointing to save memory |
-| `mixed_precision` | `bf16` | Native bf16 support |
-| `fsdp_use_orig_params` | `true` | Required for LoRA compatibility |
+### 5. Train
 
-### Accelerate Launch Parameters
+FLUX-style training:
 
-| Argument | Description | Example |
-|----------|-------------|---------|
-| `--config_file` | Accelerate config file | `accelerate_configs/fsdp_small.yaml` |
-| `--num_processes` | Number of GPUs (overrides yaml) | `4` |
-| `--mixed_precision` | Mixed precision type | `bf16` / `fp16` |
-| `--main_process_port` | Main process port (avoid conflicts) | `29500` |
-| `--gpu_ids` | Specify GPU IDs | `0,1,2,3` |
-
----
-
-## CLI Parameters
-
-All YAML config values can be overridden via CLI `--key value`. **CLI takes priority over YAML**.
-
-### Training Parameters
-
-| CLI | YAML Path | Default | Description |
-|-----|-----------|---------|-------------|
-| `--lr` | `training.learning_rate` | `1e-5` | Learning rate |
-| `--max_steps` | `training.max_train_steps` | `300` | Max training steps |
-| `--grad_accum` | `training.gradient_accumulation_steps` | `3` | Gradient accumulation steps |
-| `--batch_size` | `training.vae_decode_batch_size` | `4` | VAE decode batch size |
-| `--seed` | `training.seed` | `42` | Random seed |
-| `--max_grad_norm` | `training.max_grad_norm` | `1.0` | Gradient clip norm |
-| `--output_dir` | `training.output_dir` | `outputs/sd35m` | Output directory |
-
-### Loss Parameters
-
-| CLI | YAML Path | Default | Description |
-|-----|-----------|---------|-------------|
-| `--beta` | `loss.beta` | `15.0` | Softmax-TB temperature (higher = greedier) |
-| `--lambda_entropy` | `loss.lambda_entropy` | `0.01` | Particle entropy regularization weight |
-| `--lambda_ref` | `loss.lambda_ref` | `0.1` | Reference constraint weight |
-| `--is_clip_range` | `loss.is_clip_range` | `0.2` | IS weight clip range |
-| `--is_num_updates` | `loss.is_num_updates` | `4` | IS update iterations per sample |
-
-> **Note**: GRPO-Guard's `beta` is a KL divergence coefficient (smaller = weaker constraint), while TMPO's `beta` is a Softmax-TB temperature (larger = more reward-greedy, 0 = uniform). They have entirely different semantics.
-
-### Tree Parameters
-
-| CLI | YAML Path | Default | Description |
-|-----|-----------|---------|-------------|
-| `--kappa` | `tree.kappa` | `4.0` | Beta distribution concentration (0 = uniform baseline) |
-| `--num_inference_steps` | `tree.num_inference_steps` | `28` | Total sampling steps |
-| `--tree_k` | `tree.k` | `3` | Branching factor per split (3 -> 27 paths) |
-
----
-
-## Training Metrics
-
-Each step prints two log lines:
-
-```
-[Step 1/300] loss=12.35 tb=11.23 entropy=0.08 ref=0.00 reward=0.25 alpha=0.50
-             approx_kl=0.0023 clipfrac=0.12 ratio=1.002+/-0.045 log_prob=-1234.5 grad_norm=0.87
+```bash
+bash scripts/train_flux.sh config/flux_lora_pickscore.yaml \
+  --max_steps 500 \
+  --wandb_project tmpo
 ```
 
-### Metric Interpretation
+SD3.5-Medium LoRA training:
 
-| Metric | Meaning | Healthy Range | Action on Anomaly |
-|--------|---------|---------------|-------------------|
-| **loss** | Total loss | Steadily decreasing | Diverging -> lower `--lr` |
-| **tb** | Softmax-TB weighted loss | Steadily decreasing | Stalled -> adjust `--beta` |
-| **entropy** | RBF particle entropy (path similarity) | Slowly decreasing | Not decreasing = good diversity |
-| **ref** | Reference constraint loss | Low | Too high -> increase `--lambda_ref` |
-| **reward** | Mean reward | Steadily increasing | Stalled -> check reward model paths |
-| **alpha** | Difficulty level (Beta schedule) | 0->1 slowly | Always 0 = reward too low; always 1 = too high |
-| **approx_kl** | Policy shift magnitude | < 0.1 | > 0.5 -> reduce `--is_num_updates` |
-| **clipfrac** | IS weight clip fraction | < 0.3 | > 0.5 -> increase `--is_clip_range` |
-| **ratio** | IS ratio mean +/- std | 1.0 +/- 0.1 | Far from 1.0 -> RatioNorm issue |
-| **log_prob** | Current policy log_prob mean | Slowly changing | Sudden change -> model instability |
-| **grad_norm** | Gradient norm (post-clip) | < `max_grad_norm` | Persistently clipped -> lower `--lr` |
+```bash
+bash scripts/train_sd35m.sh
+```
 
----
+Manual launch:
 
-## GPU Requirements
+```bash
+accelerate launch --config_file accelerate_configs/fsdp_small.yaml \
+  --num_processes 4 \
+  tmpo/train.py \
+  --config config/sd35m_lora.yaml \
+  --lr 1e-5 \
+  --beta 15.0
+```
 
-| Configuration | Minimum GPU | Recommended |
-|---------------|-------------|-------------|
-| SD3.5-M + LoRA | 1x24GB | 4x24GB (FSDP) |
-| Flux + LoRA | 2x24GB | 4x80GB (FSDP) |
-| SD3.5-M Full Params | 4x24GB | 8x80GB |
-| **Large-scale (recommended)** | 4x80GB | **8xH200 80GB (SHARD_GRAD_OP)** |
+Fast smoke run:
+
+```bash
+accelerate launch --config_file accelerate_configs/single_gpu.yaml \
+  tmpo/train.py \
+  --config config/sd35m_lora.yaml \
+  --max_steps 2 \
+  --grad_accum 1 \
+  --is_num_updates 1 \
+  --no_wandb \
+  --no_eval
+```
+
+## Configuration
+
+All YAML values can be overridden from the CLI. Common options:
+
+| CLI | YAML path | Purpose |
+|---|---|---|
+| `--lr` | `training.learning_rate` | Optimizer learning rate |
+| `--max_steps` | `training.max_train_steps` | Number of training iterations |
+| `--grad_accum` | `training.gradient_accumulation_steps` | Gradient accumulation |
+| `--batch_size` | `training.vae_decode_batch_size` | Reward decode batch size |
+| `--beta` | `loss.beta` | Softmax-TB reward temperature |
+| `--lambda_ref` | `loss.lambda_ref` | Reference trajectory constraint |
+| `--is_num_updates` | `loss.is_num_updates` | Importance-sampling update passes |
+| `--tree_k` | `tree.k` | Branching factor |
+| `--num_inference_steps` | `tree.num_inference_steps` | Training rollout steps |
+| `--force_fixed_schedule` | `tree.force_fixed_schedule` | Use fixed split/noise schedule |
+| `--eval_every` | `eval.eval_every` | Inline evaluation interval |
+
+Reward aggregation modes are implemented in [`tmpo/rewards/compute.py`](tmpo/rewards/compute.py):
+
+- `advantage_aggr`: z-score each reward model within the trajectory group, then weighted-sum. Recommended for heterogeneous rewards.
+- `reward_aggr`: weighted-sum raw rewards, then normalize the aggregate.
+- `raw_aggr`: weighted-sum raw rewards directly. Useful for already calibrated scores or evaluation.
+
+## Code Map
+
+```text
+TMPO/
+|-- accelerate_configs/       # Accelerate/FSDP launch configs
+|-- config/                   # SD3.5 and FLUX training YAMLs
+|-- Data/                     # Example prompt files
+|-- scripts/                  # Training entry scripts
+|-- tmpo/
+|   |-- train.py              # Main training loop and CLI
+|   |-- sampling/             # SDE step, scheduler, tree sampler
+|   |-- losses/               # Softmax-TB, RatioNorm IS, reference loss
+|   |-- rewards/              # HPSv2, CLIPScore, PickScore, ImageReward, GenEval, OCR
+|   |-- eval/                 # Inline evaluation and diversity metrics
+|   `-- utils/                # Distributed helpers, checkpointing, EMA, logging
+`-- setup_guide.md            # Step-by-step deployment guide
+```
+
+## Training Signals
+
+During training, TMPO logs reward, diversity, trajectory probability, and optimization diagnostics. Useful fields include:
+
+| Metric | Meaning |
+|---|---|
+| `loss_soft_tb` | Softmax-TB distribution matching monitor |
+| `mean_reward` | Mean normalized reward over sampled trajectories |
+| `reward_raw_primary_mean` | Mean raw score for the primary reward model |
+| `num_branches` | Number of terminal tree trajectories |
+| `diversity_lgmd` | Latent-space diversity estimate |
+| `diversity_cosine` | CLIP/DINO-style feature diversity estimate |
+| `approx_kl` | Policy shift proxy |
+| `ratio_mean`, `ratio_std`, `clipfrac` | Importance-ratio diagnostics |
+| `grad_norm` | Post-clip gradient norm |
+
+## Star History
+
+<a href="https://star-history.com/#Chael-Chael/TMPO&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Chael-Chael/TMPO&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Chael-Chael/TMPO&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Chael-Chael/TMPO&type=Date" />
+  </picture>
+</a>
+
+## Citation
+
+If this code or paper is useful for your research, please cite:
+
+```bibtex
+@article{li2026tmpo,
+  title   = {TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Alignment},
+  author  = {Li, Jiaming and Zhu, Chenyu and Yi, Nanxi and Bao, Youjun and Sun, Li and Lv, Quanying and Fang, Xiang and Liu, Daizong and Li, Jianjun and He, Kun and Zhou, Bowen and Ma, Zhiyuan},
+  journal = {Preprint},
+  year    = {2026}
+}
+```
+
+## Acknowledgements
+
+TMPO builds on the broader ecosystem of diffusion RL, GFlowNets, Hugging Face Diffusers, Accelerate, PyTorch, PEFT, and open reward models such as HPSv2, PickScore, ImageReward, CLIPScore, OCR, and GenEval.

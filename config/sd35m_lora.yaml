@@ -1,0 +1,65 @@
+model:
+  # pretrained_path: "stabilityai/stable-diffusion-3.5-medium"
+  pretrained_path: "./models/sd35m"
+  vae_path: null
+  lora:
+    rank: 32
+    alpha: 32
+    target_modules: ["to_q", "to_k", "to_v", "to_out.0"]
+    dropout: 0.0
+
+dataset:
+  data_json_path: "data/pickapic_prompts.json"
+  resolution: [512, 512]
+
+tree:
+  num_inference_steps: 28
+  k: 3
+  base_noise_levels: [0.4, 0.7, 1.0]
+  kappa: 4.0
+  shift: 3.0
+  sde_type: "cps"
+
+loss:
+  beta: 15.0
+  lambda_entropy: 0.0    # disabled: Softmax-TB forward KL is inherently mode-covering
+  lambda_ref: 0.1
+  is_clip_range: 0.2
+  is_num_updates: 4
+  rbf_bandwidth: 1.0
+  adv_clip_max: 5.0
+
+reward:
+  models: ["hpsv2", "clipscore"]
+  weights: [0.6, 0.4]
+  mix_strategy: "advantage_aggr"
+  hps_path: ""
+  hps_clip_path: ""
+  clip_score_model_path: ""
+  pickscore_processor_path: ""
+  pickscore_model_path: ""
+  imagereward_model_name: ""
+  imagereward_med_config: ""
+  aesthetic_clip_model_name: "openai/clip-vit-large-patch14"
+  aesthetic_predictor_ckpt: ""
+  # GenEval HTTP reward server
+  geneval_url: ""
+  geneval_batch_size: 64
+  geneval_timeout: 120
+  geneval_only_strict: true
+  geneval_retries: 6
+
+training:
+  learning_rate: 1e-5
+  max_grad_norm: 1.0
+  weight_decay: 0.0001
+  gradient_accumulation_steps: 3
+  max_train_steps: 300
+  checkpointing_steps: 50
+  mixed_precision: "bf16"
+  gradient_checkpointing: true
+  allow_tf32: true
+  seed: 42
+  vae_decode_batch_size: 4
+  output_dir: "outputs/sd35m"
+  experiment_name: "tmpo_sd35m"

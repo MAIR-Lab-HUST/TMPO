@@ -1,0 +1,130 @@
+
+model:
+  pretrained_path: ""
+  vae_path: null
+  guidance_scale: 3.5
+  lora:
+    rank: 64
+    alpha: 128
+    target_modules: ["to_q", "to_k", "to_v", "to_out.0",
+                     "add_q_proj", "add_k_proj", "add_v_proj", "to_add_out",
+                     "ff.net.0.proj", "ff.net.2",
+                     "ff_context.net.0.proj", "ff_context.net.2"]
+    dropout: 0.0
+
+dataset:
+  data_json_path: ""
+  resolution: [512, 512]
+
+tree:
+  num_inference_steps: 6
+  k: 3
+  num_roots: 1
+  branch_levels: 3
+  max_leaves: 27
+  noise_level: 0.7
+  noise_levels: [0.7, 0.7, 0.7]
+  shift: 3.0
+  use_flux_dynamic_shift: true
+  flux_base_seq_len: 256
+  flux_max_seq_len: 4096
+  flux_base_shift: 0.5
+  flux_max_shift: 1.15
+  tail_guard_steps: 1
+  schedule_mode: "progress"
+  early_splits: [1, 2, 3]
+  late_splits: [1, 3, 5]
+  min_gap: 1
+  beta_kappa: 6.0
+  force_fixed_schedule: false
+  fixed_split_steps: [1, 3, 4]
+  fixed_noise_levels: [0.7, 0.7, 0.7]
+  sde_type: "cps"
+
+loss:
+  beta: 0.8
+  beta_target: 2.0
+  beta_warmup_steps: 150
+  lambda_entropy: 0.0    # disabled: Softmax-TB forward KL is inherently mode-covering
+  lambda_ref: 0.5
+  ref_scale: 1.0
+  use_real_ref: false
+  lambda_ppo: 0.1
+  ppo_clip_range: 0.2
+  adv_clip_max: 5.0
+  is_clip_range: 0.2
+  is_num_updates: 2
+  rbf_bandwidth: 50.0
+
+reward:
+  models: ["hpsv2", "imagereward", "pickscore"]
+  weights: [0.333, 0.333, 0.334]
+  mix_strategy: "advantage_aggr"
+
+  hps_path: ""
+  hps_clip_path: ""
+
+  pickscore_processor_path: ""
+  pickscore_model_path: ""
+  pickscore_score_mode: "flow_scaled"
+  pickscore_mean: 18.0
+  pickscore_std: 8.0
+  pickscore_batch_size: 8
+  pickscore_strict: true
+  pickscore_local_files_only: true
+
+  clip_score_model_path: ""
+
+  imagereward_model_name: ""
+  imagereward_med_config: ""
+
+  aesthetic_clip_model_name: "openai/clip-vit-large-patch14"
+  aesthetic_predictor_ckpt: ""
+
+  geneval_url: ""
+  geneval_batch_size: 64
+  geneval_timeout: 120
+  geneval_only_strict: true
+  geneval_retries: 6
+
+training:
+  learning_rate: 3e-5
+  max_grad_norm: 0.5
+  weight_decay: 0.0001
+  keep_lora_fp32: false
+  sanitize_lora_grad: true
+  lora_grad_clip: 0.0
+  gradient_accumulation_steps: 1
+  max_train_steps: 500
+  checkpointing_steps: 50
+  save_state: true
+  save_state_steps: 200
+  save_optimizer: false
+  mixed_precision: "bf16"
+  gradient_checkpointing: false
+  allow_tf32: true
+  cudnn_safe_mode: true
+  seed: 888
+  vae_decode_batch_size: 2
+  recompute_sub_batch: 2
+  output_dir: ""
+  experiment_name: "tmpo_flux_dev_8gpu_hpsv2_imagereward_pickscore"
+  ema_enabled: true
+  ema_decay: 0.9
+  ema_update_interval: 8
+
+debug:
+  backprop_scale: 1.0
+  recompute_fp32: true
+
+eval:
+  enabled: true
+  eval_every: 50
+  num_prompts: 100
+  num_images_per_prompt: 10
+  num_inference_steps: 28
+  eval_sample_batch_size: 5
+  eval_decode_batch_size: 10  # VAE decode batch
+  reward_mix_strategy: "raw_aggr"
+  output_file: "eval_results_hpsv2_imagereward_pickscore.jsonl"
+  test_data_path: ""

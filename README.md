@@ -31,11 +31,12 @@
   <sub><sup>*</sup>Equal contribution &nbsp; <sup>&dagger;</sup>Corresponding author</sub>
 </p>
 
-[![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/Chael-Chael/TMPO)
+[![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/MAIR-Lab-HUST/TMPO)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.3%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![Diffusers](https://img.shields.io/badge/HuggingFace-Diffusers-FFD21E?style=flat-square&logo=huggingface&logoColor=black)](https://github.com/huggingface/diffusers)
 [![Preprint](https://img.shields.io/badge/Paper-Preprint-b31b1b?style=flat-square)](#citation)
+[![Project Page](https://img.shields.io/badge/Project-Page-2ea44f?style=flat-square)](https://tmpo-diffusion.github.io/)
 
 [Highlights](#highlights) | [Method](#method) | [Results](#results) | [Get Started](#get-started) | [Code Map](#code-map) | [Star History](#star-history) | [Citation](#citation)
 

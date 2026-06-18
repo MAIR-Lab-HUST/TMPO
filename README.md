@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.3%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![Diffusers](https://img.shields.io/badge/HuggingFace-Diffusers-FFD21E?style=flat-square&logo=huggingface&logoColor=black)](https://github.com/huggingface/diffusers)
-[![Preprint](https://img.shields.io/badge/Paper-NeurIPS_2026_Preprint-b31b1b?style=flat-square)](#citation)
+[![Preprint](https://img.shields.io/badge/Paper-Preprint-b31b1b?style=flat-square)](#citation)
 
 [Highlights](#highlights) | [Method](#method) | [Results](#results) | [Get Started](#get-started) | [Code Map](#code-map) | [Star History](#star-history) | [Citation](#citation)
 

@@ -5,7 +5,6 @@
 ### Diverse and Efficient Diffusion Model Alignment via Trajectory-Level Reward Distribution Matching
 
 [![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/Chael-Chael/TMPO/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/Chael-Chael/TMPO?style=flat-square&logo=github)](https://github.com/Chael-Chael/TMPO/network/members)
 [![Last commit](https://img.shields.io/github/last-commit/Chael-Chael/TMPO?style=flat-square&logo=github)](https://github.com/Chael-Chael/TMPO/commits/main)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.3%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
@@ -39,8 +38,19 @@ The implementation in this repository provides the training code for **Softmax T
 ## Demo
 
 <p align="center">
-  <img src="assets/readme/tmpo-overview.svg" alt="TMPO framework overview" width="94%">
+  <img src="assets/readme/E_3_Pick.png" alt="Qualitative comparison on a PickScore-style visual preference prompt" width="94%">
 </p>
+<p align="center"><em>Figure 1. Qualitative comparison on a visual preference prompt, where TMPO preserves diverse high-reward humanoid designs while matching the requested scene.</em></p>
+
+<p align="center">
+  <img src="assets/readme/E_3_OCR.png" alt="Qualitative comparison on an OCR-sensitive text rendering prompt" width="94%">
+</p>
+<p align="center"><em>Figure 2. OCR-sensitive prompt comparison, testing whether the aligned model keeps the requested sign text and surrounding lemonade-stand context.</em></p>
+
+<p align="center">
+  <img src="assets/readme/E_3_Geneval.png" alt="Qualitative comparison on a GenEval-style object and attribute binding prompt" width="94%">
+</p>
+<p align="center"><em>Figure 3. GenEval-style object and attribute binding prompt, comparing how methods render a green frisbee together with an orange bed.</em></p>
 
 ## Method
 

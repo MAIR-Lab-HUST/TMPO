@@ -1,8 +1,8 @@
 <div align="center">
 
-# TMPO: Trajectory Matching Policy Optimization
+# TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Model Alignment
 
-### Diverse and Efficient Diffusion Model Alignment via Trajectory-Level Reward Distribution Matching
+## From Reward Maximization to Reward Distribution Matching
 
 [![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/Chael-Chael/TMPO)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)

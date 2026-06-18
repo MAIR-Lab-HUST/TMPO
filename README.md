@@ -2,7 +2,34 @@
 
 # TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Model Alignment
 
-## From Reward Maximization to Reward Distribution Matching
+<p align="center"><strong>From Reward Maximization to Reward Distribution Matching</strong></p>
+
+<p align="center">
+  Jiaming Li<sup>1,2,*</sup> &nbsp;·&nbsp;
+  Chenyu Zhu<sup>1,*</sup> &nbsp;·&nbsp;
+  Nanxi Yi<sup>1</sup> &nbsp;·&nbsp;
+  Youjun Bao<sup>2</sup> &nbsp;·&nbsp;
+  Li Sun<sup>2</sup> &nbsp;·&nbsp;
+  Quanying Lv<sup>2</sup>
+  <br>
+  Xiang Fang<sup>3</sup> &nbsp;·&nbsp;
+  Daizong Liu<sup>4</sup> &nbsp;·&nbsp;
+  Jianjun Li<sup>1</sup> &nbsp;·&nbsp;
+  Kun He<sup>1</sup> &nbsp;·&nbsp;
+  Bowen Zhou<sup>5</sup> &nbsp;·&nbsp;
+  Zhiyuan Ma<sup>1,&dagger;</sup>
+</p>
+
+<p align="center">
+  <sup>1</sup>MAIR Lab, Huazhong University of Science and Technology &nbsp;
+  <sup>2</sup>Kuaishou Technology
+  <br>
+  <sup>3</sup>Nanyang Technological University &nbsp;
+  <sup>4</sup>Wuhan University &nbsp;
+  <sup>5</sup>Tsinghua University
+  <br>
+  <sub><sup>*</sup>Equal contribution &nbsp; <sup>&dagger;</sup>Corresponding author</sub>
+</p>
 
 [![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/Chael-Chael/TMPO)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
@@ -11,10 +38,6 @@
 [![Preprint](https://img.shields.io/badge/Paper-Preprint-b31b1b?style=flat-square)](#citation)
 
 [Highlights](#highlights) | [Method](#method) | [Results](#results) | [Get Started](#get-started) | [Code Map](#code-map) | [Star History](#star-history) | [Citation](#citation)
-
-</div>
-
----
 
 TMPO is a reinforcement learning framework for aligning diffusion and flow-matching models without collapsing generation diversity. Instead of maximizing a scalar reward directly, TMPO matches the policy distribution over complete denoising trajectories to a reward-induced Boltzmann distribution. The result is a mode-covering objective that keeps multiple plausible high-reward outputs alive while still improving downstream reward.
 

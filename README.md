@@ -39,6 +39,7 @@
 
 [Highlights](#highlights) | [Method](#method) | [Results](#results) | [Get Started](#get-started) | [Code Map](#code-map) | [Star History](#star-history) | [Citation](#citation)
 
+</div>
 TMPO is a reinforcement learning framework for aligning diffusion and flow-matching models without collapsing generation diversity. Instead of maximizing a scalar reward directly, TMPO matches the policy distribution over complete denoising trajectories to a reward-induced Boltzmann distribution. The result is a mode-covering objective that keeps multiple plausible high-reward outputs alive while still improving downstream reward.
 
 The implementation in this repository provides the training code for **Softmax Trajectory Balance (Softmax-TB)**, **Dynamic Stochastic Tree Sampling**, multi-reward aggregation, inline evaluation, and distributed LoRA fine-tuning for SD3.5-Medium and FLUX-style models.

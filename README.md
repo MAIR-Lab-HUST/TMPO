@@ -4,8 +4,7 @@
 
 ### Diverse and Efficient Diffusion Model Alignment via Trajectory-Level Reward Distribution Matching
 
-[![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/Chael-Chael/TMPO/stargazers)
-[![Last commit](https://img.shields.io/github/last-commit/Chael-Chael/TMPO?style=flat-square&logo=github)](https://github.com/Chael-Chael/TMPO/commits/main)
+[![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/Chael-Chael/TMPO)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.3%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![Diffusers](https://img.shields.io/badge/HuggingFace-Diffusers-FFD21E?style=flat-square&logo=huggingface&logoColor=black)](https://github.com/huggingface/diffusers)
@@ -291,7 +290,3 @@ If this code or paper is useful for your research, please cite:
   year    = {2026}
 }
 ```
-
-## Acknowledgements
-
-TMPO builds on the broader ecosystem of diffusion RL, GFlowNets, Hugging Face Diffusers, Accelerate, PyTorch, PEFT, and open reward models such as HPSv2, PickScore, ImageReward, CLIPScore, OCR, and GenEval.

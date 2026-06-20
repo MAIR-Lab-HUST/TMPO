@@ -33,7 +33,7 @@
 
 [![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/MAIR-Lab-HUST/TMPO)
 [![Preprint](https://img.shields.io/badge/Paper-Preprint-b31b1b?style=flat-square)](https://arxiv.org/pdf/2605.10983)
-[![Project Page](https://img.shields.io/badge/Project-Page-2ea44f?style=flat-square)](https://tmpo-diffusion.github.io/)
+[![Project Page](https://img.shields.io/badge/Project-Page-2ea44f?style=flat-square)](https://mair-lab-hust.github.io/TMPO/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.3%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
 

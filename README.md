@@ -39,6 +39,11 @@
 
 [Highlights](#highlights) | [Method](#method) | [Results](#results) | [Get Started](#get-started) | [Code Map](#code-map) | [Star History](#star-history) | [Citation](#citation)
 
+<p align="center">
+  <img src="assets/readme/figure1_comparison.png" alt="Paper Figure 1: generative diversity comparison between TMPO and Flow-GRPO" width="94%">
+</p>
+<p align="center"><em>Paper Figure 1. Generative diversity comparison between TMPO (Ours) and Flow-GRPO.</em></p>
+
 </div>
 TMPO is a reinforcement learning framework for aligning diffusion and flow-matching models without collapsing generation diversity. Instead of maximizing a scalar reward directly, TMPO matches the policy distribution over complete denoising trajectories to a reward-induced Boltzmann distribution. The result is a mode-covering objective that keeps multiple plausible high-reward outputs alive while still improving downstream reward.
 

@@ -5,15 +5,11 @@
 # 🚀 TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Model Alignment
 
 <p align="center"><strong>From Reward Maximization to Reward Distribution Matching</strong></p>
-<table align="center" border="0" cellpadding="0" cellspacing="0">
-  <tr>
-    <td valign="middle"><img src="assets/icons/MAIR.png" alt="MAIR Lab" height="32"></td>
-    <td valign="middle" style="padding-left: 1px;"><strong>MAIR Lab @ HUST</strong></td>
-    <td valign="middle" style="padding: 0 12px;">✕</td>
-    <td valign="middle"><img src="assets/icons/kuaishou.png" alt="Kuaishou Technology" height="32"></td>
-    <td valign="middle" style="padding-left: 1px;"><strong>Kuaishou Technology</strong></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="assets/icons/MAIR.png" alt="MAIR Lab" height="32" style="vertical-align: middle;"> <strong>MAIR Lab @ HUST</strong>
+  &nbsp;&nbsp;✕&nbsp;&nbsp;
+  <img src="assets/icons/kuaishou.png" alt="Kuaishou Technology" height="32" style="vertical-align: middle;"> <strong>Kuaishou Technology</strong>
+</p>
 
 [![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/MAIR-Lab-HUST/TMPO)
 [![NeurIPS 2026](https://img.shields.io/badge/Paper-NeurIPS'26-b31b1b?style=flat-square)](https://arxiv.org/pdf/2605.10983)

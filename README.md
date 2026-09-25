@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/readme/tmpo_banner_A_4x3.png" alt="TMPO trajectory distribution matching banner" width="100%">
+<img src="assets/readme/tmpo_banner_A_4x3.png" alt="TMPO trajectory distribution matching banner" width="50%">
 
 # 🚀 TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Model Alignment
 

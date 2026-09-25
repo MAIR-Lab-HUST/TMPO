@@ -1,6 +1,8 @@
 <div align="center">
 
-# TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Model Alignment
+<img src="assets/readme/tmpo_banner_A_4x3.png" alt="TMPO trajectory distribution matching banner" width="100%">
+
+# 🚀 TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Model Alignment
 
 <p align="center"><strong>From Reward Maximization to Reward Distribution Matching</strong></p>
 
@@ -32,12 +34,12 @@
 </p>
 
 [![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/MAIR-Lab-HUST/TMPO)
-[![Preprint](https://img.shields.io/badge/Paper-Preprint-b31b1b?style=flat-square)](https://arxiv.org/pdf/2605.10983)
+[![NeurIPS 2026](https://img.shields.io/badge/Paper-NeurIPS'26-b31b1b?style=flat-square)](https://arxiv.org/pdf/2605.10983)
 [![Project Page](https://img.shields.io/badge/Project-Page-2ea44f?style=flat-square)](https://mair-lab-hust.github.io/TMPO/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.3%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
 
-[Highlights](#highlights) | [Method](#method) | [Results](#results) | [Get Started](#get-started) | [Code Map](#code-map) | [Star History](#star-history) | [Citation](#citation)
+[✨ Highlights](#highlights) | [🧠 Method](#method) | [📊 Results](#results) | [🚀 Get Started](#get-started) | [🗂️ Code Map](#code-map) | [⭐ Star History](#star-history) | [📝 Citation](#citation)
 
 <p align="center">
   <img src="assets/readme/figure1_comparison.png" alt="Paper Figure 1: generative diversity comparison between TMPO and Flow-GRPO" width="94%">
@@ -45,25 +47,26 @@
 <p align="center"><em>Paper Figure 1. Generative diversity comparison between TMPO (Ours) and Flow-GRPO.</em></p>
 
 </div>
-TMPO is a reinforcement learning framework for aligning diffusion and flow-matching models without collapsing generation diversity. Instead of maximizing a scalar reward directly, TMPO matches the policy distribution over complete denoising trajectories to a reward-induced Boltzmann distribution. The result is a mode-covering objective that keeps multiple plausible high-reward outputs alive while still improving downstream reward.
+Most alignment methods chase a single best-looking answer. TMPO takes a different route: it learns the full distribution of promising denoising trajectories, so a diffusion or flow-matching model can improve its reward without collapsing its creative range. By matching the policy distribution to a reward-induced Boltzmann distribution, TMPO turns reward optimization into trajectory distribution matching——preserving multiple plausible, high-reward modes instead of pushing every sample toward one solution.
 
-The implementation in this repository provides the training code for **Softmax Trajectory Balance (Softmax-TB)**, **Dynamic Stochastic Tree Sampling**, multi-reward aggregation, inline evaluation, and distributed LoRA fine-tuning for SD3.5-Medium and FLUX-style models.
+This repository contains the complete training stack behind that idea: **Softmax Trajectory Balance (Softmax-TB)** for stable distribution matching, **Dynamic Stochastic Tree Sampling** for branching diverse trajectories efficiently, multi-reward aggregation, inline evaluation, and distributed LoRA fine-tuning for SD3.5-Medium and FLUX-style models.
 
-## News
+## 📰 News
 
-- **2026.05** - Initial TMPO code release with FLUX/SD3.5 training configs, tree sampling, Softmax-TB loss, multi-reward wrappers, and inline evaluation.
-- **2026.05** - Preprint: *TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Alignment*.
+- **2026.09** - 🎉TMPO accepted to NeurIPS 2026 !!!
+- **2026.05** - 📦 Initial TMPO code release with FLUX/SD3.5 training configs, tree sampling, Softmax-TB loss, multi-reward wrappers, and inline evaluation.
+- **2026.05** - 📄 Preprint: *TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Alignment*.
 
-## Highlights
+## ✨ Highlights
 
-- **Reward distribution matching, not reward maximization.** TMPO optimizes a trajectory-level distribution target, reducing the mode-seeking behavior that drives visual mode collapse.
-- **Softmax Trajectory Balance.** The loss matches normalized trajectory log-probabilities to `softmax(beta * reward)`, avoiding an explicit global partition function.
-- **Dynamic Stochastic Tree Sampling.** Denoising prefixes are shared, then trajectories branch at scheduled SDE steps; with `k=3` and three branch levels, one prompt yields up to 27 terminal trajectories.
-- **Multi-reward training.** HPSv2, CLIPScore, PickScore, ImageReward, GenEval, OCR, and aesthetic scoring can be combined with per-group normalization.
-- **Scalable alignment.** The code supports LoRA, FSDP, bf16, gradient diagnostics, checkpointing, EMA, and inline evaluation.
-- **Paper-level outcome.** On FLUX.1-dev, TMPO reports a 9.1% average diversity improvement over prior state-of-the-art methods while reaching competitive or best downstream rewards and reducing training time by up to 27%.
+- 🌈 **Reward distribution matching, not reward maximization.** TMPO optimizes a trajectory-level distribution target, reducing the mode-seeking behavior that drives visual mode collapse.
+- ⚖️ **Softmax Trajectory Balance.** The loss matches normalized trajectory log-probabilities to `softmax(beta * reward)`, avoiding an explicit global partition function.
+- 🌳 **Dynamic Stochastic Tree Sampling.** Denoising prefixes are shared, then trajectories branch at scheduled SDE steps; with `k=3` and three branch levels, one prompt yields up to 27 terminal trajectories.
+- 🎯 **Multi-reward training.** HPSv2, CLIPScore, PickScore, ImageReward, GenEval, OCR, and aesthetic scoring can be combined with per-group normalization.
+- ⚡ **Scalable alignment.** The code supports LoRA, FSDP, bf16, gradient diagnostics, checkpointing, EMA, and inline evaluation.
+- 🏆 **Paper-level outcome.** On FLUX.1-dev, TMPO reports a 9.1% average diversity improvement over prior state-of-the-art methods while reaching competitive or best downstream rewards and reducing training time by up to 27%.
 
-## Demo
+## 🎨 Demo
 
 <p align="center">
   <img src="assets/readme/E_3_Pick.png" alt="Qualitative comparison on a PickScore-style visual preference prompt" width="94%">
@@ -80,13 +83,13 @@ The implementation in this repository provides the training code for **Softmax T
 </p>
 <p align="center"><em>Figure 3. GenEval-style object and attribute binding prompt, comparing how methods render a green frisbee together with an orange bed.</em></p>
 
-## Method
+## 🧠 Method
 
-### Why Distribution Matching?
+### 🔄 Why Distribution Matching?
 
 Standard diffusion RL methods usually optimize expected reward. This is effective for improving a single metric, but it is intrinsically mode-seeking: when many outputs are acceptable, the model can over-concentrate on a small subset that exploits the proxy reward. TMPO reframes alignment as matching a reward-induced trajectory distribution, so high-reward alternatives can all receive probability mass.
 
-### Softmax Trajectory Balance
+### ⚖️ Softmax Trajectory Balance
 
 For `K` trajectories sampled from the same prompt group, TMPO computes cumulative trajectory log-probabilities and terminal rewards:
 
@@ -99,7 +102,7 @@ advantage_i = target_i - policy_i
 
 This group normalization cancels the intractable partition terms and makes the objective directly optimizable over observed trajectories. In code, the core implementation lives in [`tmpo/losses/softmax_tb.py`](tmpo/losses/softmax_tb.py) and is assembled with clipped importance sampling and reference constraints in [`tmpo/losses/total_loss.py`](tmpo/losses/total_loss.py).
 
-### Dynamic Stochastic Tree Sampling
+### 🌲 Dynamic Stochastic Tree Sampling
 
 Naively sampling many full denoising trajectories is expensive. TMPO instead shares deterministic denoising prefixes and injects stochastic SDE branches only at scheduled split points. The tree sampler supports:
 
@@ -112,7 +115,7 @@ Naively sampling many full denoising trajectories is expensive. TMPO instead sha
 
 The implementation is in [`tmpo/sampling/tree_sampler.py`](tmpo/sampling/tree_sampler.py) and [`tmpo/sampling/scheduler.py`](tmpo/sampling/scheduler.py).
 
-## Results
+## 📊 Results
 
 The following compact table summarizes key FLUX.1-dev results from the preprint. Lower time is better; higher reward and diversity metrics are better.
 
@@ -124,16 +127,16 @@ The following compact table summarizes key FLUX.1-dev results from the preprint.
 
 TMPO is designed to improve the trade-off between reward, diversity, and efficiency rather than optimizing one scalar score at the expense of all others.
 
-## Get Started
+## 🚀 Get Started
 
-### 1. Clone
+### 1. 📥 Clone
 
 ```bash
 git clone https://github.com/Chael-Chael/TMPO.git
 cd TMPO
 ```
 
-### 2. Create Environment
+### 2. 🧪 Create Environment
 
 ```bash
 conda create -n tmpo python=3.10 -y
@@ -153,7 +156,7 @@ pip install git+https://github.com/openai/CLIP.git
 
 For a more exhaustive setup path, see [`setup_guide.md`](setup_guide.md).
 
-### 3. Prepare Models and Rewards
+### 3. 🤗 Prepare Models and Rewards
 
 SD3.5-Medium requires Hugging Face access approval:
 
@@ -179,7 +182,7 @@ reward:
   hps_clip_path: "./reward_ckpt/open_clip_pytorch_model.bin"
 ```
 
-### 4. Prepare Prompts
+### 4. 💬 Prepare Prompts
 
 Training expects a JSON prompt file. Supported formats include a list of strings, a list of objects with a `prompt` field, or a dictionary of id-to-prompt pairs.
 
@@ -199,7 +202,7 @@ PY
 
 Update `dataset.data_json_path` in your config if you use a different path.
 
-### 5. Train
+### 5. 🏋️ Train
 
 FLUX-style training:
 
@@ -239,7 +242,7 @@ accelerate launch --config_file accelerate_configs/single_gpu.yaml \
   --no_eval
 ```
 
-## Configuration
+## ⚙️ Configuration
 
 All YAML values can be overridden from the CLI. Common options:
 
@@ -263,7 +266,7 @@ Reward aggregation modes are implemented in [`tmpo/rewards/compute.py`](tmpo/rew
 - `reward_aggr`: weighted-sum raw rewards, then normalize the aggregate.
 - `raw_aggr`: weighted-sum raw rewards directly. Useful for already calibrated scores or evaluation.
 
-## Code Map
+## 🗂️ Code Map
 
 ```text
 TMPO/
@@ -281,7 +284,7 @@ TMPO/
 `-- setup_guide.md            # Step-by-step deployment guide
 ```
 
-## Training Signals
+## 📈 Training Signals
 
 During training, TMPO logs reward, diversity, trajectory probability, and optimization diagnostics. Useful fields include:
 
@@ -297,7 +300,7 @@ During training, TMPO logs reward, diversity, trajectory probability, and optimi
 | `ratio_mean`, `ratio_std`, `clipfrac` | Importance-ratio diagnostics |
 | `grad_norm` | Post-clip gradient norm |
 
-## Star History
+## ⭐ Star History
 
 <a href="https://star-history.com/#Chael-Chael/TMPO&Date">
   <picture>
@@ -307,7 +310,7 @@ During training, TMPO logs reward, diversity, trajectory probability, and optimi
   </picture>
 </a>
 
-## Citation
+## 📝 Citation
 
 If this code or paper is useful for your research, please cite:
 

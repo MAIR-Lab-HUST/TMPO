@@ -6,9 +6,9 @@
 
 <p align="center"><strong>From Reward Maximization to Reward Distribution Matching</strong></p>
 <p align="center">
-  <img src="assets/icons/MAIR.png" alt="MAIR Lab" height="32" style="vertical-align: middle;"> <strong>MAIR Lab @ HUST</strong>
+  <img src="assets/icons/MAIR.png" alt="MAIR Lab" height="32" align="middle"> <strong>MAIR Lab @ HUST</strong>
   &nbsp;&nbsp;✕&nbsp;&nbsp;
-  <img src="assets/icons/kuaishou.png" alt="Kuaishou Technology" height="32" style="vertical-align: middle;"> <strong>Kuaishou Technology</strong>
+  <img src="assets/icons/kuaishou.png" alt="Kuaishou Technology" height="32" align="middle"> <strong>Kuaishou Technology</strong>
 </p>
 
 [![GitHub stars](https://img.shields.io/github/stars/Chael-Chael/TMPO?style=flat-square&logo=github&color=yellow)](https://github.com/MAIR-Lab-HUST/TMPO)

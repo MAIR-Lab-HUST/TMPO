@@ -32,6 +32,10 @@ This repository contains the complete training stack behind that idea: **Softmax
 ## 📰 News
 
 - **2026.09** - 🎉TMPO accepted to NeurIPS 2026 !!!
+<p align="center">
+  <img src="assets/TMPO_poster_NeurIPS2026.png">
+</p>
+
 - **2026.05** - 📦 Initial TMPO code release with FLUX/SD3.5 training configs, tree sampling, Softmax-TB loss, multi-reward wrappers, and inline evaluation.
 - **2026.05** - 📄 Preprint: *TMPO: Trajectory Matching Policy Optimization for Diverse and Efficient Diffusion Alignment*.
 
